@@ -1,0 +1,14 @@
+{
+  "name": "soloflow",
+  "version": "0.0.1",
+  "private": true,
+  "description": "한국 프리랜서·1인 사업자용 단일 운영 앱 — 대금/계약/일정/집중을 한 곳에서. FreeLang v11 only, event sourcing on freelang-elog + freelang-vcol.",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "node /root/kim/freelang-v11/bootstrap.js run src/main.fl",
+    "spec": "python3 -c \"import json; d=json.load(open('SPEC.airc')); print('hot:', d['hot']); print('what:', d['identity']['what']); print('not:', d['identity']['not'])\""
+  },
+  "dependencies": {
+    "freelang-elog": "file:../kim/freelang-elog"
+  }
+}

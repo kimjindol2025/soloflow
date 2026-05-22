@@ -1,0 +1,300 @@
+{
+  "$": "airc-spec",
+  "version": "1.0.0",
+  "project": "soloflow",
+  "date": "2026-05-22",
+  "cmd": "python3 -c \"import json; d=json.load(open('SPEC.airc')); print('hot:', d['hot']); print('what:', d['identity']['what']); print('not:', d['identity']['not'])\"",
+
+  "identity": {
+    "what": "한국 프리랜서·1인 사업자용 단일 운영 앱 — 대금/계약/일정/집중을 한 곳에서 다룬다",
+    "why": "프리랜서가 가장 아픈 3축(대금·계약·일정)을 흩어진 도구 없이 빠르게 처리. SaaS 의존 없이 자체호스팅·zero-dep 으로 통제 가능한 자기 운영 시스템",
+    "for": "20대 후반~40대 한국 프리랜서/1인 사업자/부업러/크리에이터. 본인 PC·휴대폰에서 자체호스팅 또는 단일 사용자 인스턴스 운용",
+    "not": "팀 협업 도구 아님 (단일 사용자 single-tenant). 회계 정산 SaaS 아님 (세무사 대체 X — 보조 데이터 제공만). 메신저·CRM 통합 허브 아님 (외부 SaaS API 흡수 금지). 모바일 native 앱 아님 v1 (순수 SSR 웹). 다국가 세무/통화 자동 변환 v1 미지원 (KRW 단일)"
+  },
+
+  "hot": "task-003",
+
+  "constitution": {
+    "1": "AI 전용. 인간 가독성을 위한 구조 타협 금지",
+    "2": "identity 잠금 — 변경 사용자 협의 필수. Claude 단독 변경 금지",
+    "3": "hot 이 가리키는 task 가 지금 당장 해야 할 일",
+    "4": "오류·실수도 nodes 에 기록",
+    "5": "노드 삭제 금지 — void 처리만 허용",
+    "6": "why 없는 lock·decision 등록 불가"
+  },
+
+  "types": {
+    "task":     "t + v + entry + check + verified + next",
+    "decision": "t + v + why + lock",
+    "error":    "t + v + cause + fix + repeat_risk"
+  },
+
+  "stack": {
+    "language": "FreeLang v11 (.fl) only — 신규 코드 전부",
+    "runtime":  "node /root/kim/freelang-v11/bootstrap.js run <file.fl>",
+    "storage":  "freelang-elog (event log) on freelang-vcol (columnar). event sourcing 패턴",
+    "render":   "순수 SSR — server-html / server-redirect / form-field. JS 0 줄 가능",
+    "deploy":   "단일 사용자 인스턴스. 공식 서버 (kimjin@123.212.111.26:22253) 또는 로컬",
+    "port":     "41955 (41900 = freelang-metric-store 사용 중 → 회피)"
+  },
+
+  "domain_map": {
+    "M1_invoice": "견적·청구·입금 추적. hot task 첫 모듈",
+    "M2_contract": "계약서 템플릿·만료 알림·스코프 체크리스트",
+    "M3_schedule": "프로젝트 타임라인·마일스톤·daily focus",
+    "M4_focus":   "Pomodoro·집중 시간·습관 체크. 작업 모드 형태로 M1~M3 와 연동"
+  },
+
+  "priority": ["M1_invoice", "M2_contract", "M3_schedule", "M4_focus"],
+
+  "nodes": {
+
+    "task-001": {
+      "t": "task",
+      "v": "M1 invoice MVP — 송장 등록 / 입금 기록 / 미수금 현황 3축만 (압축)",
+      "spec": {
+        "domain_events": {
+          "invoice.created":          "{id, client, amount_krw, issued_at, due_at, memo}",
+          "invoice.payment.received": "{id, paid_amount_krw, paid_at, method}"
+        },
+        "storage": {
+          "underlying": "freelang-elog session — soloflow-invoice-<startTs>.vcol",
+          "schema":     "elog v1 fixed schema (ts/type/payload). payload = utf-8 JSON",
+          "reader":     "ElogReader byType / byTimeRange + caller side state projection"
+        },
+        "state_projection": {
+          "invoice":  "events scan → 현재 status 도출 (open / partial / paid). cancelled·sent 는 v1.1 후보",
+          "ar_aging": "issued_at + due_at + 현재시각 비교 → overdue 분류 (0-30/31-60/60+)",
+          "monthly_revenue": "paid_at 기준 월별 paid_amount_krw 합계"
+        },
+        "ssr_routes": {
+          "GET /":                  "이번 달 수입·미수금 요약 + 오늘 due 인 invoice",
+          "GET /invoices":          "전체 invoice 리스트 + status 필터 (open/partial/paid)",
+          "GET /invoices/new":      "신규 invoice 폼",
+          "POST /invoices":         "invoice.created 이벤트 기록 → /invoices 로 redirect",
+          "GET /invoices/:id":      "invoice 상세 + 이벤트 timeline",
+          "POST /invoices/:id/pay": "invoice.payment.received 이벤트 기록"
+        }
+      },
+      "scope_in": [
+        "domain events 2종 (created, payment.received) — 압축 (사용자 검토 2026-05-22)",
+        "invoice ID 생성 (sortable — startTs+seq)",
+        "state projection (현재 status open/partial/paid + overdue 분류)",
+        "SSR 라우트 6개 (GET /·/invoices·/invoices/new·/invoices/:id, POST /invoices·/:id/pay)",
+        "단일 통화 KRW 만",
+        "render.fl 헬퍼 (h / redirect-to / form-field)"
+      ],
+      "scope_out_v1": [
+        "invoice.sent 이벤트 (발송 채널 기록) — v1.1 후보. 이메일/SMS 발송 자체는 v2",
+        "invoice.cancelled 이벤트 — v1.1 후보 (오기재 정정 흐름)",
+        "PDF invoice 생성",
+        "이메일/SMS 발송",
+        "다중 통화·환율",
+        "세무 자동 계산 (예상 소득세·부가세는 v1.x)",
+        "클라이언트 master 별도 모듈 (v1 은 invoice payload 안의 client 문자열만)",
+        "사용자 인증·다중 사용자",
+        "JS 클라이언트 (순수 SSR)"
+      ],
+      "entry": [
+        "src/main.fl",
+        "src/invoice.fl",
+        "src/state.fl",
+        "src/render.fl",
+        "data/soloflow-invoice-*.vcol"
+      ],
+      "check": [
+        "node bootstrap.js run src/main.fl → 포트 41955 listen",
+        "POST /invoices → invoice.created 이벤트 elog 기록 확인",
+        "GET /invoices/:id → timeline 2종 이벤트 round-trip 가능 (created/payment)",
+        "overdue 분류 정확도 (due_at < now & status != paid) 단위 검증",
+        "monthly revenue 합계 = 같은 달 payment.received 이벤트 amount 합계",
+        "부분입금 (paid_amount < amount) 시 status = partial 도출"
+      ],
+      "verified": false,
+      "next": ["task-002", "task-003"]
+    },
+
+    "task-002": {
+      "t": "task",
+      "v": "M1 미수금 자동 분류 + 요약 대시보드 (root /)",
+      "spec": {
+        "aging_buckets": ["0-30일", "31-60일", "60일 초과"],
+        "summary_cards": ["이번 달 수입(paid 합계)", "총 미수금(sent 후 paid 없음)", "오늘 due", "이번 주 due"]
+      },
+      "scope_in": [
+        "GET / 요약 페이지 SSR",
+        "aging projection 함수",
+        "summary projection 함수"
+      ],
+      "entry": ["src/render.fl", "src/state.fl"],
+      "check": [
+        "fixture invoice 5종 (paid·sent·overdue·draft·cancelled) → 요약 카드 4종 정확",
+        "aging bucket 경계값 (30/31/60/61일) 정확"
+      ],
+      "verified": false,
+      "next": []
+    },
+
+    "task-003": {
+      "t": "task",
+      "v": "S0 리포 초기화 — Gogs kim/soloflow + .gitignore + package.json (vcol/elog file: dependency) + README 최소",
+      "spec": {
+        "gogs": "gogs.dclub.kr/kim/soloflow",
+        "deps_pattern": "package.json freelang-elog: file:../kim/freelang-elog. (elog → vcol file 자동 전파)",
+        "freelang_path": "bootstrap.js 경로는 /root/kim/freelang-v11/bootstrap.js (baseline freeze 직후, fx 1192 worktree 가 truth set 이나 본체 회귀 방지 위해 v11 master 사용)"
+      },
+      "scope_in": [
+        "git init + gogs remote",
+        ".gitignore (data/*.vcol, node_modules, .env)",
+        "package.json + scripts",
+        "README.md 최소 (1 단락)"
+      ],
+      "entry": [".gitignore", "package.json", "README.md"],
+      "check": [
+        "git push gogs master 성공",
+        "elog/vcol require 가능 (npm install 후)"
+      ],
+      "verified": false,
+      "next": ["task-001"]
+    },
+
+    "dec-001": {
+      "t": "decision",
+      "v": "별도 리포 (gogs.dclub.kr/kim/soloflow) — vcol/elog/v11 본체와 분리",
+      "why": [
+        "soloflow 는 application layer. vcol(storage) / elog(event log) / v11(language) 본체 회귀 차단",
+        "3 axis independence 정신 (vcol dec-001 / elog dec-007 계승)",
+        "square-freelang 과 다른 도메인 — 결제/POS 아닌 프리랜서 운영. 흡수 시 도메인 혼합"
+      ],
+      "lock": true
+    },
+
+    "dec-002": {
+      "t": "decision",
+      "v": "Event sourcing 패턴 — invoice/payment 는 elog 위 도메인 이벤트로 기록. 상태는 projection",
+      "why": [
+        "elog 가 columnar append-only — in-place update 불가. status 변경(draft→sent→paid)은 이벤트로만 표현",
+        "audit trail 자동 확보 — 모든 상태 전환 history 보존",
+        "v0.1 schema (ts/type/payload) 위에 자연스럽게 매핑. 별도 storage 도입 시 elog 자산 낭비"
+      ],
+      "rules": [
+        "쓰기는 항상 이벤트 append 만. 직접 row update 금지",
+        "상태는 reader scan 결과 projection. cache 는 v1 후보 (overhead 측정 후)",
+        "이벤트 type 명명: '<aggregate>.<verb>' (snake.dotted)"
+      ],
+      "lock": true
+    },
+
+    "dec-003": {
+      "t": "decision",
+      "v": "단일 통화 KRW (₩) v1 — 다국가/환율 v2 후보",
+      "why": [
+        "타겟 = 한국 프리랜서. 90%+ 케이스 KRW",
+        "다국가 시 환율 source·역사 환율 보존·세금 모델 폭발 → MVP 범위 초과"
+      ],
+      "rules": [
+        "payload amount_krw 정수 (원 단위, 소수점 금지)",
+        "다국가는 v2 — '신규 통화 enum + 환율 스냅샷 이벤트' 추가 cycle 별도"
+      ],
+      "lock": false
+    },
+
+    "dec-004": {
+      "t": "decision",
+      "v": "단일 사용자 single-tenant v1 — 인증·다중 사용자 v2 후보",
+      "why": [
+        "자체호스팅 모델 = 1 인스턴스 = 1 사용자 가정",
+        "인증 도입 시 cookie/session/CSRF 복잡도 폭발 → v2 cycle",
+        "공개 인터넷 노출 시 reverse proxy (nginx basic auth) 우회 권장 — 앱 책임 아님"
+      ],
+      "rules": [
+        "v1 라우트 인증 체크 없음. localhost 또는 사설망 운용 가정",
+        "v2 = login/logout + cookie 인증 + 사용자별 elog 파일 분리"
+      ],
+      "lock": false
+    },
+
+    "dec-005": {
+      "t": "decision",
+      "v": "순수 SSR — JS 0 줄. form POST + server-html 렌더링만",
+      "why": [
+        "memory feedback_freelang_ssr_no_js — JS 없이 완전한 앱 가능. 단순성·번들리스",
+        "FreeLang v11 의 server-html / server-redirect / form-field 로 충분",
+        "JS 도입 시 빌드 파이프라인·번들·hydration 복잡도. MVP 범위 초과"
+      ],
+      "rules": [
+        "<script> 태그 금지 v1",
+        "동적 인터랙션 필요 시 form POST + redirect 패턴",
+        "클럽 앱 반복 실수 회피 — (server-html ...) / (server-redirect ...) / (form-field raw \"key\") 만 사용"
+      ],
+      "lock": true
+    },
+
+    "dec-006": {
+      "t": "decision",
+      "v": "FreeLang v11 baseline = master (legacy core). fx 1192 (truth set) 직접 사용 금지 v1",
+      "why": [
+        "memory project_freelang_v11_baseline — fx 가 truth set 이나 baseline freeze 직후",
+        "신규 application 이 v11 회귀 강제하지 않도록 master 기준. 안정성 우선",
+        "v11 본체 변경 필요 시 별도 cycle. soloflow 안에서 v11 패치 금지"
+      ],
+      "rules": [
+        "bootstrap.js 경로 = /root/kim/freelang-v11/bootstrap.js (master)",
+        "v11 본체 미접촉. v11 stdlib 86개 안에서 해결",
+        "v11 한계 발견 시 graveyard + FreeLang 백로그로 분리"
+      ],
+      "lock": false
+    },
+
+    "dec-007": {
+      "t": "decision",
+      "v": "Storage = freelang-elog (event log) 만. SQL/SQLite 도입 금지",
+      "why": [
+        "elog 가 application timeline primitive — 자연스러운 fit",
+        "SQL 도입 시 schema migration·index·query plan 복잡도. event sourcing 이점 상실",
+        "FreeLang v11 sqlite stdlib 있으나 (project_freelang_v11) 본 프로젝트 정신과 충돌 (zero-dep + event-sourcing)"
+      ],
+      "rules": [
+        "package.json: freelang-elog file:../kim/freelang-elog (elog 가 vcol 자동 의존)",
+        "데이터 디렉토리 data/*.vcol — gitignore",
+        "elog v0.1 의 12 invariants 손상 금지"
+      ],
+      "lock": true
+    }
+  },
+
+  "lock": [
+    {"rule": "별도 리포 — vcol/elog/v11 본체와 분리 (dec-001)",                    "why": "application layer 격리. 본체 회귀 차단"},
+    {"rule": "Event sourcing — 직접 row update 금지 (dec-002)",                "why": "elog columnar append-only 정합. audit trail 자동 확보"},
+    {"rule": "순수 SSR — JS 0 줄 (dec-005)",                                    "why": "MVP 범위·번들 복잡도 회피. v11 SSR primitive 로 충분"},
+    {"rule": "Storage = elog 만 (dec-007)",                                    "why": "event sourcing 일관성. SQL/SQLite 시 패러다임 혼합"},
+    {"rule": "v11 본체 미접촉 (dec-006)",                                       "why": "본체 회귀 차단. v11 한계는 별도 백로그"},
+    {"rule": "외부 npm runtime 의존 0 — elog file: 외 금지",                    "why": "zero-dep 정신 (v11/vcol/elog 계승)"},
+    {"rule": "blog API key·gogs 토큰 등 secret 평문 commit 금지",                "why": "2026-05-21 보안 정책. pre-commit secret scan 정합"},
+    {"rule": "클럽 앱 반복 실수 패턴 회피 (res-html/form-parse 금지 등)",         "why": "/root/kim/CLAUDE.md 명시 — 같은 실수 반복 비용"}
+  ],
+
+  "graveyard": [
+    {"idea": "Flutter native 앱",                            "why": "memory feedback_new_project_workflow + 사용자 선택 A — FreeLang v11 only. native 도입 시 도메인·언어·빌드 폭발", "final": true},
+    {"idea": "Supabase / Firebase backend",                  "why": "외부 SaaS 의존. 자체호스팅·zero-dep 정신 위반. 단일 사용자 모델에 과잉",                                       "final": true},
+    {"idea": "팀 협업 기능 (멤버·권한·공유)",                  "why": "identity.not — single-tenant. 멀티유저 시 인증·격리·동기화 폭발",                                              "final": true},
+    {"idea": "PDF invoice 자동 생성",                        "why": "v1 scope_out. PDF 라이브러리 의존 + 폰트·디자인 cycle 별도",                                                      "final": false},
+    {"idea": "이메일/SMS 발송 자동화",                       "why": "v1 scope_out. SMTP·SMS API 의존. v1 은 status 변경 이벤트만 기록, 발송은 외부 도구",                                "final": false},
+    {"idea": "다국가 통화 + 환율 자동 변환",                  "why": "dec-003 — v1 KRW only. 환율 source/역사 보존 cycle 별도",                                                          "final": false},
+    {"idea": "세무사 대체 자동 신고",                        "why": "identity.not — 세무사 대체 X. 보조 데이터(예상 소득세 추정)만 v1.x 후보",                                            "final": true},
+    {"idea": "JS 프론트엔드 (React/Vue/Svelte)",             "why": "dec-005 — 순수 SSR. 번들·hydration 복잡도. v11 SSR 로 충분",                                                       "final": true},
+    {"idea": "SQLite/SQL 도입",                              "why": "dec-007 — event sourcing 일관성. v11 sqlite stdlib 있으나 패러다임 혼합",                                            "final": true},
+    {"idea": "Slack/Notion/Google Workspace 통합",            "why": "identity.not — 통합 허브 아님. 외부 SaaS API 흡수 시 zero-dep·통제 가능성 상실",                                  "final": true},
+    {"idea": "사용자 인증 v1 포함",                          "why": "dec-004 — single-tenant. localhost/사설망 또는 reverse proxy basic auth 사용. v2 후보",                              "final": false},
+    {"idea": "Kakao/Naver/Google OAuth 로그인",               "why": "single-tenant 정신 위배 + 외부 OAuth 의존(zero-dep 위반) + 토큰 갱신·콘솔 등록 cycle 폭발. v2 인증 도입 시 v11 내장 session + (선택) 전화 인증 어댑터로 충분 (사용자 검토 2026-05-22)", "final": true}
+  ],
+
+  "handoff": {
+    "step1": "cmd 실행 → identity·hot·not 확인",
+    "step2": "graveyard 확인 — 이미 버린 방향(Flutter/Supabase/SQL/JS 프론트/팀협업/세무대체)",
+    "step3": "task-003 (S0 리포 초기화) 먼저 → 그 후 task-001 (M1 invoice MVP) 실행. task-002 는 task-001 이후",
+    "step4": "오류 발생 시 error 노드로 기록 (cause/fix/repeat_risk)",
+    "step5": "identity / lock 변경 필요 시 사용자에게 먼저 협의 — Claude 단독 변경 금지",
+    "step6": "v11 본체 / vcol / elog 한계 발견 시 graveyard + 해당 프로젝트 백로그로 분리 — soloflow 안에서 본체 패치 금지"
+  }
+}
