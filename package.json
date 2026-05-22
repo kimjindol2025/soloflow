@@ -7,8 +7,5 @@
   "scripts": {
     "start": "node /root/kim/freelang-v11/bootstrap.js run src/main.fl",
     "spec": "python3 -c \"import json; d=json.load(open('SPEC.airc')); print('hot:', d['hot']); print('what:', d['identity']['what']); print('not:', d['identity']['not'])\""
-  },
-  "dependencies": {
-    "freelang-elog": "file:../kim/freelang-elog"
   }
 }
