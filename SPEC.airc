@@ -12,7 +12,7 @@
     "not": "팀 협업 도구 아님 (단일 사용자 single-tenant). 회계 정산 SaaS 아님 (세무사 대체 X — 보조 데이터 제공만). 메신저·CRM 통합 허브 아님 (외부 SaaS API 흡수 금지). 모바일 native 앱 아님 v1 (순수 SSR 웹). 다국가 세무/통화 자동 변환 v1 미지원 (KRW 단일)"
   },
 
-  "hot": "task-001",
+  "hot": "task-002",
 
   "constitution": {
     "1": "AI 전용. 인간 가독성을 위한 구조 타협 금지",
@@ -111,8 +111,10 @@
         "monthly revenue 합계 = 같은 달 payment.received 이벤트 amount 합계",
         "부분입금 (paid_amount < amount) 시 status = partial 도출"
       ],
-      "verified": false,
-      "next": ["task-002", "task-003"]
+      "verified": true,
+      "verified_at": "2026-05-22",
+      "verified_evidence": "E2E 6/6 PASS — home/create/partial-pay/full-pay/overdue/list-filter 모두 검증. JSONL 4 events round-trip 확인",
+      "next": ["task-002"]
     },
 
     "task-002": {
@@ -267,6 +269,15 @@
         "v11 한계 발견 시 graveyard + FreeLang 백로그로 분리"
       ],
       "lock": false
+    },
+
+    "err-001": {
+      "t": "error",
+      "v": "render.fl 의 (defn h [s] ...) 가 v11 빌트인 (h :tag ...) 과 충돌. (h \"홈\") → <홈></홈> 로 렌더링됨",
+      "cause": "v11 eval-builtins.ts case \"h\": HTML element 생성자. 사용자 정의 함수보다 우선 평가됨. 클럽 앱 가이드의 'h' 헬퍼 명명은 구버전 v11 기준",
+      "fix": "render.fl 의 h → esc 로 리네임. invoice.fl 의 모든 (h ...) 호출도 (esc ...) 로 교체",
+      "repeat_risk": "다른 단글자 함수명도 충돌 가능 (예: c, e, p). 신규 헬퍼는 3자 이상 권장",
+      "date": "2026-05-22"
     },
 
     "dec-007": {

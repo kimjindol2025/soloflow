@@ -1,0 +1,177 @@
+; soloflow invoice.fl — M1 invoice MVP 라우트 핸들러
+; 라우트: GET / · /invoices · /invoices/new · POST /invoices · GET /invoices/:id · POST /invoices/:id/pay
+
+; ── GET / : 요약 대시보드 ──────────────────────────────────
+(defn handle-index [req]
+  (let [now-ym (date-format (now-ms) "yyyy-MM")
+        revenue (monthly-revenue now-ym)
+        unpaid (unpaid-invoices)
+        unpaid-total (sum (map (fn [inv] (get inv "balance")) unpaid))
+        due (due-today)
+        body (str
+          "<h1>이번 달 요약 (" (esc now-ym) ")</h1>"
+          "<div class=\"grid\">"
+            "<div class=\"stat\"><div class=\"v\">" (money revenue) "</div><div class=\"l\">이번 달 수입</div></div>"
+            "<div class=\"stat\"><div class=\"v\">" (money unpaid-total) "</div><div class=\"l\">총 미수금</div></div>"
+            "<div class=\"stat\"><div class=\"v\">" (str (length unpaid)) "</div><div class=\"l\">미수 송장 수</div></div>"
+            "<div class=\"stat\"><div class=\"v\">" (str (length due)) "</div><div class=\"l\">오늘 due</div></div>"
+          "</div>"
+          "<h2>오늘 due 인 송장</h2>"
+          (if (= (length due) 0)
+            "<p class=\"muted\">없음.</p>"
+            (render-invoice-table due)))]
+    (server-html (layout "홈" body))))
+
+; ── 송장 테이블 HTML ────────────────────────────────────────
+(defn render-invoice-table [invs]
+  (str
+    "<table><thead><tr>"
+    "<th>송장 ID</th><th>클라이언트</th><th>금액</th><th>잔액</th><th>발행</th><th>만기</th><th>상태</th><th>경과</th>"
+    "</tr></thead><tbody>"
+    (reduce
+      (fn [acc inv]
+        (str acc
+          "<tr>"
+          "<td><a href=\"/invoices/" (esc (get inv "id")) "\">" (esc (str-slice (get inv "id") 0 16)) "…</a></td>"
+          "<td>" (esc (get inv "client")) "</td>"
+          "<td class=\"right\">" (money (get inv "amount_krw")) "</td>"
+          "<td class=\"right\">" (money (get inv "balance")) "</td>"
+          "<td>" (fmt-date (get inv "issued_at")) "</td>"
+          "<td>" (fmt-date (get inv "due_at")) "</td>"
+          "<td>" (status-badge (get inv "status")) "</td>"
+          "<td>" (esc (aging-bucket inv)) "</td>"
+          "</tr>"))
+      ""
+      invs)
+    "</tbody></table>"))
+
+; ── GET /invoices : 전체 송장 리스트 ───────────────────────
+(defn handle-invoices [req]
+  (let [filter-q (get (get req "query") "status")
+        all (list-invoices)
+        invs (if (or (nil? filter-q) (str-blank? filter-q))
+               all
+               (filter (fn [i] (= (get i "status") filter-q)) all))
+        body (str
+          "<h1>송장 (" (str (length invs)) "건)</h1>"
+          "<p>"
+            "<a href=\"/invoices\">전체</a> · "
+            "<a href=\"/invoices?status=open\">미수</a> · "
+            "<a href=\"/invoices?status=partial\">부분입금</a> · "
+            "<a href=\"/invoices?status=paid\">완납</a> · "
+            "<a href=\"/invoices?status=overdue\">연체</a>"
+          "</p>"
+          (if (= (length invs) 0)
+            "<p class=\"muted\">송장이 없습니다. <a href=\"/invoices/new\">새 송장 작성</a></p>"
+            (render-invoice-table invs)))]
+    (server-html (layout "송장" body))))
+
+; ── GET /invoices/new : 폼 ──────────────────────────────────
+(defn handle-new-form [req]
+  (let [today (date-format (now-ms) "yyyy-MM-dd")
+        plus30 (date-format (date-add (now-ms) "days" 30) "yyyy-MM-dd")
+        body (str
+          "<h1>새 송장</h1>"
+          "<form method=\"POST\" action=\"/invoices\">"
+            "<label>클라이언트<input name=\"client\" required></label>"
+            "<label>금액 (KRW, 정수)<input name=\"amount_krw\" type=\"number\" min=\"1\" required></label>"
+            "<label>발행일<input name=\"issued_at\" type=\"date\" value=\"" today "\" required></label>"
+            "<label>만기일<input name=\"due_at\" type=\"date\" value=\"" plus30 "\" required></label>"
+            "<label>메모 (선택)<textarea name=\"memo\" rows=\"3\"></textarea></label>"
+            "<button type=\"submit\">송장 생성</button>"
+          "</form>")]
+    (server-html (layout "새 송장" body))))
+
+; ── POST /invoices : invoice.created 이벤트 기록 ───────────
+(defn handle-create [req]
+  (let [body (get req "body")
+        client (form-field body "client")
+        amount (form-num body "amount_krw")
+        issued-s (form-field body "issued_at")
+        due-s (form-field body "due_at")
+        memo (form-field body "memo")]
+    (if (or (str-blank? client) (<= amount 0)
+            (str-blank? issued-s) (str-blank? due-s))
+      (server-status 400 "필수 필드 누락")
+      (let [id (make-invoice-id)
+            payload {"id" id
+                     "client" client
+                     "amount_krw" amount
+                     "issued_at" (date-parse issued-s)
+                     "due_at" (date-parse due-s)
+                     "memo" memo}]
+        (append-event "invoice.created" payload)
+        (server-redirect (str "/invoices/" id))))))
+
+; ── GET /invoices/:id : 상세 + timeline ────────────────────
+(defn handle-detail [req]
+  (let [id (get (get req "params") "id")
+        inv (project-invoice id)]
+    (if (nil? inv)
+      (server-status 404 "송장을 찾을 수 없습니다")
+      (server-html (layout (str "송장 · " (str-slice id 0 16)) (render-detail inv))))))
+
+(defn render-detail [inv]
+  (str
+    "<h1>송장 상세 " (status-badge (get inv "status")) "</h1>"
+    "<div class=\"card\">"
+      "<table>"
+      "<tr><th>송장 ID</th><td><code>" (esc (get inv "id")) "</code></td></tr>"
+      "<tr><th>클라이언트</th><td>" (esc (get inv "client")) "</td></tr>"
+      "<tr><th>금액</th><td>" (money (get inv "amount_krw")) "</td></tr>"
+      "<tr><th>입금 합계</th><td>" (money (get inv "paid_sum")) "</td></tr>"
+      "<tr><th>잔액</th><td><strong>" (money (get inv "balance")) "</strong></td></tr>"
+      "<tr><th>발행일</th><td>" (fmt-date (get inv "issued_at")) "</td></tr>"
+      "<tr><th>만기일</th><td>" (fmt-date (get inv "due_at")) "</td></tr>"
+      "<tr><th>메모</th><td>" (esc (get inv "memo")) "</td></tr>"
+      "</table>"
+    "</div>"
+    (if (not (= (get inv "status") "paid"))
+      (render-pay-form (get inv "id") (get inv "balance"))
+      "")
+    "<h2>입금 이력</h2>"
+    (render-payments (get inv "payments"))))
+
+(defn render-pay-form [id balance]
+  (str
+    "<h2>입금 기록</h2>"
+    "<form method=\"POST\" action=\"/invoices/" (esc id) "/pay\">"
+      "<label>입금액 (KRW)<input name=\"paid_amount_krw\" type=\"number\" min=\"1\" max=\"" (str balance) "\" value=\"" (str balance) "\" required></label>"
+      "<label>입금일<input name=\"paid_at\" type=\"date\" value=\"" (date-format (now-ms) "yyyy-MM-dd") "\" required></label>"
+      "<label>입금 방식<input name=\"method\" value=\"bank-transfer\" required></label>"
+      "<button type=\"submit\">입금 기록</button>"
+    "</form>"))
+
+(defn render-payments [pays]
+  (if (= (length pays) 0)
+    "<p class=\"muted\">입금 기록 없음.</p>"
+    (str "<table><thead><tr><th>입금일</th><th>금액</th><th>방식</th></tr></thead><tbody>"
+      (reduce
+        (fn [acc p]
+          (str acc "<tr>"
+            "<td>" (fmt-date (get p "paid_at")) "</td>"
+            "<td class=\"right\">" (money (get p "amount")) "</td>"
+            "<td>" (esc (get p "method")) "</td>"
+            "</tr>"))
+        "" pays)
+      "</tbody></table>")))
+
+; ── POST /invoices/:id/pay : invoice.payment.received ──────
+(defn handle-pay [req]
+  (let [id (get (get req "params") "id")
+        inv (project-invoice id)
+        body (get req "body")
+        amount (form-num body "paid_amount_krw")
+        paid-s (form-field body "paid_at")
+        method (form-field body "method")]
+    (cond
+      (nil? inv)            (server-status 404 "송장을 찾을 수 없습니다")
+      (<= amount 0)         (server-status 400 "입금액은 0보다 커야 합니다")
+      (str-blank? paid-s)   (server-status 400 "입금일 누락")
+      :else (do
+        (append-event "invoice.payment.received"
+                      {"id" id
+                       "paid_amount_krw" amount
+                       "paid_at" (date-parse paid-s)
+                       "method" method})
+        (server-redirect (str "/invoices/" id))))))

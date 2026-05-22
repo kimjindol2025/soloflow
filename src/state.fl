@@ -1,0 +1,116 @@
+; soloflow state.fl — event log + projection
+; dec-002 LOCK: event sourcing. 직접 row update 금지. append 만.
+; dec-007 LOCK: JSONL. data/invoice-events.jsonl 한 파일.
+
+(define EVENTS-PATH "data/invoice-events.jsonl")
+
+; ── 이벤트 append (atomic file-append) ─────────────────────
+(defn append-event [type payload]
+  (let [ev {"ts" (now-ms) "type" type "payload" payload}
+        line (str (json-stringify ev) "\n")]
+    (file-append EVENTS-PATH line)
+    ev))
+
+; ── 전체 이벤트 읽기 ────────────────────────────────────────
+(defn read-events []
+  (if (not (file-exists EVENTS-PATH))
+    []
+    (let [raw (file-read EVENTS-PATH)
+          lines (str-lines raw)
+          non-empty (filter (fn [l] (not (str-blank? l))) lines)]
+      (map (fn [l] (json-parse l)) non-empty))))
+
+; ── 타입별 필터 ─────────────────────────────────────────────
+(defn events-of-type [type]
+  (filter (fn [e] (= (get e "type") type)) (read-events)))
+
+; ── 특정 invoice id 의 이벤트 ──────────────────────────────
+(defn events-for-id [id]
+  (filter
+    (fn [e] (= (get (get e "payload") "id") id))
+    (read-events)))
+
+; ── 단일 송장 projection: id → invoice state ───────────────
+(defn project-invoice [id]
+  (let [evs (events-for-id id)
+        created-list (filter (fn [e] (= (get e "type") "invoice.created")) evs)
+        pay-list     (filter (fn [e] (= (get e "type") "invoice.payment.received")) evs)]
+    (if (= (length created-list) 0)
+      nil
+      (let [c (get (get created-list 0) "payload")
+            paid-sum (sum (map (fn [p] (get (get p "payload") "paid_amount_krw")) pay-list))
+            amt (get c "amount_krw")
+            status (compute-status amt paid-sum (get c "due_at"))
+            payments (map (fn [p]
+                            (let [pp (get p "payload")]
+                              {"ts" (get p "ts")
+                               "amount" (get pp "paid_amount_krw")
+                               "paid_at" (get pp "paid_at")
+                               "method" (get pp "method")}))
+                          pay-list)]
+        {"id" id
+         "client" (get c "client")
+         "amount_krw" amt
+         "issued_at" (get c "issued_at")
+         "due_at" (get c "due_at")
+         "memo" (get c "memo")
+         "paid_sum" paid-sum
+         "balance" (- amt paid-sum)
+         "status" status
+         "payments" payments}))))
+
+; ── status 산출: amount / paid / due ───────────────────────
+(defn compute-status [amount paid due-at]
+  (cond
+    (>= paid amount)             "paid"
+    (> paid 0)                   "partial"
+    (and (not (nil? due-at))
+         (< due-at (now-ms)))    "overdue"
+    :else                        "open"))
+
+; ── 전체 송장 리스트 projection ─────────────────────────────
+(defn list-invoices []
+  (let [created (events-of-type "invoice.created")
+        ids (map (fn [e] (get (get e "payload") "id")) created)
+        invs (map (fn [id] (project-invoice id)) ids)]
+    (compact invs)))
+
+; ── 미수금 (status != paid) ─────────────────────────────────
+(defn unpaid-invoices []
+  (filter (fn [inv] (not (= (get inv "status") "paid"))) (list-invoices)))
+
+; ── aging bucket: now - due_at → "0-30" / "31-60" / "60+" ──
+(defn aging-bucket [inv]
+  (let [due (get inv "due_at")]
+    (if (nil? due)
+      "—"
+      (let [days (date-diff due (now-ms) "days")]
+        (cond
+          (<= days 0)   "예정"
+          (<= days 30)  "0-30일"
+          (<= days 60)  "31-60일"
+          :else         "60일+")))))
+
+; ── 이번 달 수입: paid_at 기준 같은 YYYY-MM 인 payment 합계 ─
+(defn monthly-revenue [year-month]
+  (let [pays (events-of-type "invoice.payment.received")
+        match (filter
+                (fn [p]
+                  (let [paid-at (get (get p "payload") "paid_at")]
+                    (= (date-format paid-at "yyyy-MM") year-month)))
+                pays)]
+    (sum (map (fn [p] (get (get p "payload") "paid_amount_krw")) match))))
+
+; ── 오늘 due 인 송장 ───────────────────────────────────────
+(defn due-today []
+  (let [today-y-m-d (date-format (now-ms) "yyyy-MM-dd")]
+    (filter
+      (fn [inv]
+        (and (not (= (get inv "status") "paid"))
+             (= (date-format (get inv "due_at") "yyyy-MM-dd") today-y-m-d)))
+      (list-invoices))))
+
+; ── ID 생성: <ts>-<6 hex> (sortable) ───────────────────────
+(defn make-invoice-id []
+  (let [u (uuid)]
+    (str (now-ms) "-" (str-slice u 0 6))))

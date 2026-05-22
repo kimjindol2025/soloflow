@@ -1,0 +1,94 @@
+; soloflow render.fl — SSR HTML helpers + layout
+; dec-005 LOCK: 순수 SSR, JS 0줄. <script> 태그 금지.
+
+; ── XSS 안전 이스케이프 ─────────────────────────────────────
+(defn esc [s]
+  (if (nil? s)
+    ""
+    (html-escape (str s))))
+
+; ── 폼 필드 안전 접근 (form-urlencoded 자동 파싱된 map 가정) ──
+(defn form-field [body key]
+  (let [v (get body key)]
+    (if (nil? v) "" (str v))))
+
+; ── 입력 폼 필드를 숫자로 (빈 입력 → 0) ─────────────────────
+(defn form-num [body key]
+  (let [v (get body key)]
+    (cond
+      (nil? v)        0
+      (str-blank? (str v)) 0
+      :else           (str-to-num (str v)))))
+
+; ── KRW 통화 포맷: 1234567 → "₩1,234,567" ──────────────────
+(defn money [krw]
+  (let [n (if (nil? krw) 0 krw)
+        s (str n)
+        len (length s)]
+    (str "₩" (group-thousands s len))))
+
+(defn group-thousands [s len]
+  (if (<= len 3)
+    s
+    (str (group-thousands (str-slice s 0 (- len 3)) (- len 3))
+         ","
+         (str-slice s (- len 3) len))))
+
+; ── 날짜 표시: ms → "yyyy-MM-dd" ────────────────────────────
+(defn fmt-date [ts]
+  (if (nil? ts) "—" (date-format ts "yyyy-MM-dd")))
+
+; ── 오늘 0시 ms ─────────────────────────────────────────────
+(defn today-ms []
+  (date-parse (date-format (now-ms) "yyyy-MM-dd")))
+
+; ── 공통 레이아웃 ───────────────────────────────────────────
+(defn layout [title body-html]
+  (str "<!DOCTYPE html>
+<html lang=\"ko\"><head>
+<meta charset=\"utf-8\">
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+<title>" (esc title) " · soloflow</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:960px;margin:0 auto;padding:1.2rem;color:#222;background:#fafafa}
+  h1,h2,h3{margin:0.8rem 0 0.4rem}
+  nav{margin-bottom:1.5rem;padding:0.6rem 0;border-bottom:2px solid #222}
+  nav a{margin-right:1.2rem;text-decoration:none;color:#222;font-weight:600}
+  nav a:hover{color:#0066cc}
+  .card{background:#fff;border:1px solid #ddd;border-radius:6px;padding:1rem;margin-bottom:1rem}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.8rem;margin-bottom:1.2rem}
+  .stat{background:#fff;border:1px solid #ddd;border-radius:6px;padding:1rem;text-align:center}
+  .stat .v{font-size:1.6rem;font-weight:700;color:#0066cc}
+  .stat .l{font-size:0.85rem;color:#666;margin-top:0.2rem}
+  table{width:100%;border-collapse:collapse;background:#fff}
+  th,td{padding:0.55rem 0.7rem;border-bottom:1px solid #eee;text-align:left;font-size:0.92rem}
+  th{background:#f3f3f3;font-weight:600}
+  .badge{display:inline-block;padding:0.15rem 0.55rem;border-radius:10px;font-size:0.78rem;font-weight:600}
+  .b-open{background:#fff3cd;color:#856404}
+  .b-partial{background:#cce5ff;color:#004085}
+  .b-paid{background:#d4edda;color:#155724}
+  .b-overdue{background:#f8d7da;color:#721c24}
+  form{display:grid;gap:0.6rem;max-width:480px}
+  label{display:block;font-size:0.9rem;font-weight:600}
+  input,textarea,button,select{font:inherit;padding:0.5rem;border:1px solid #ccc;border-radius:4px}
+  button{background:#0066cc;color:#fff;border:0;cursor:pointer;font-weight:600;padding:0.6rem 1.2rem}
+  button:hover{background:#0052a3}
+  .muted{color:#888;font-size:0.85rem}
+  .right{text-align:right}
+</style>
+</head><body>
+<nav>
+  <a href=\"/\">홈</a>
+  <a href=\"/invoices\">송장</a>
+  <a href=\"/invoices/new\">+ 새 송장</a>
+</nav>
+" body-html "
+</body></html>"))
+
+; ── 송장 status → badge HTML ───────────────────────────────
+(defn status-badge [st]
+  (cond
+    (= st "paid")     "<span class=\"badge b-paid\">완납</span>"
+    (= st "partial")  "<span class=\"badge b-partial\">부분입금</span>"
+    (= st "overdue")  "<span class=\"badge b-overdue\">연체</span>"
+    :else             "<span class=\"badge b-open\">미수</span>"))

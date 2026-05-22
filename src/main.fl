@@ -1,0 +1,17 @@
+; soloflow main.fl — 엔트리. 모듈 로드 + 라우트 등록 + 서버 시작.
+; SPEC.airc hot=task-001. 포트 41955.
+
+(load "src/render.fl")
+(load "src/state.fl")
+(load "src/invoice.fl")
+
+; ── 라우트 등록 (6개) ──────────────────────────────────────
+(server-get  "/"                    "handle-index")
+(server-get  "/invoices"            "handle-invoices")
+(server-get  "/invoices/new"        "handle-new-form")
+(server-post "/invoices"            "handle-create")
+(server-get  "/invoices/:id"        "handle-detail")
+(server-post "/invoices/:id/pay"    "handle-pay")
+
+(println "soloflow listening on http://localhost:41955")
+(server-start 41955)
