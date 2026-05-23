@@ -529,6 +529,70 @@
       "verified": true,
       "verified_at": "2026-05-23",
       "verified_evidence": "cron-test.fl 23/23 PASS (days calc + threshold + duplicate collapse + cancelled skip). scan-expiring-contracts idempotent (2회 재실행 시 reminder 변화 없음). render-expiring-badges 3색 (1d/7d/14d). contract.cancelled 상태 제외됨.",
+      "next": ["task-008"]
+    },
+
+    "task-008": {
+      "t": "task",
+      "v": "M3 schedule — 프로젝트 타임라인 (milestone + daily focus window)",
+      "spec": {
+        "domain_events": {
+          "schedule.project-created":    "{id, title, start_date, end_date?, description}",
+          "schedule.milestone-added":    "{project_id, milestone_id, title, target_date, description}",
+          "schedule.milestone-completed": "{project_id, milestone_id, completed_at}",
+          "schedule.focus-window-started": "{project_id, focus_id, started_at, planned_duration_mins}",
+          "schedule.focus-window-ended":   "{project_id, focus_id, ended_at, actual_duration_mins, completed_tasks}"
+        },
+        "storage": {
+          "underlying": "JSONL — data/schedule-events.jsonl (invoice/contract 과 분리)",
+          "schema": "{ts: number, type: string, payload: object}"
+        },
+        "state_projection": {
+          "project": "timeline view (milestones + completed %) + today's focus windows",
+          "milestones": "project id → milestone 리스트 (target_date, % done)",
+          "focus-sessions": "project id → daily focus windows 리스트 (planned vs actual mins)",
+          "daily-focus": "오늘의 focus window (현재 시간 기준 진행 중 / 예정 / 완료)"
+        },
+        "ssr_routes": {
+          "GET /schedule":                 "현재 프로젝트 타임라인 (milestone timeline view)",
+          "GET /schedule/project/new":     "새 프로젝트 폼",
+          "POST /schedule/project":        "schedule.project-created 이벤트",
+          "GET /schedule/project/:id":     "프로젝트 상세 (timeline + today's focus)",
+          "POST /schedule/project/:id/milestone": "schedule.milestone-added 이벤트",
+          "POST /schedule/project/:id/milestone/:mid/complete": "schedule.milestone-completed 이벤트",
+          "POST /schedule/project/:id/focus-start": "schedule.focus-window-started 이벤트",
+          "POST /schedule/project/:id/focus-end": "schedule.focus-window-ended 이벤트 (actual_duration 기록)"
+        }
+      },
+      "scope_in": [
+        "src/schedule-state.fl: project/milestone/focus projection",
+        "src/schedule.fl: 8 routes (list/new/create/detail/milestone-add/complete/focus-start/end)",
+        "src/render.fl: milestone timeline UI (bar chart style), focus window rendering",
+        "daily focus: planned duration 대비 actual duration 비교 (진행률 시각화)",
+        "tests/schedule-test.fl: projection + timeline invariant 검증"
+      ],
+      "scope_out_v1_1": [
+        "schedule.task (sub-task within milestone) — v1.2 후보",
+        "schedule.dependency (task A → B 선후 관계) — v1.2 후보",
+        "calendar view (week/month 단위) — v1.x 후보",
+        "recurring projects (주간/월간 패턴) — v1.x 후보",
+        "external calendar sync (Google Calendar 등) — v2 후보"
+      ],
+      "entry": [
+        "src/schedule-state.fl",
+        "src/schedule.fl",
+        "src/render.fl",
+        "src/main.fl (라우트 등록)",
+        "tests/schedule-test.fl"
+      ],
+      "check": [
+        "schedule-test.fl PASS (project/milestone/focus projection)",
+        "live: GET /schedule timeline view (gantt-style bar chart)",
+        "live: POST /schedule/project/X/focus-start/end (focus session 기록)",
+        "live: milestone target_date vs completed_at (timeline accuracy)",
+        "live: today's focus windows (planned vs actual mins)"
+      ],
+      "verified": false,
       "next": []
     },
 
