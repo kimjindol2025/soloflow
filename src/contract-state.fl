@@ -1,0 +1,97 @@
+; soloflow contract-state.fl — 계약 도메인 event log + projection
+; dec-002: event sourcing. dec-008: data/contract-events.jsonl 별도 파일
+
+; ── EVENTS-PATH override (테스트 격리) ──────────────────────
+(define CONTRACT-EVENTS-PATH
+  (let [override (env-get "SOLOFLOW_CONTRACT_EVENTS_PATH")]
+    (if (or (nil? override) (str-blank? override)) "data/contract-events.jsonl" override)))
+
+; ── 이벤트 append ──────────────────────────────────────────
+(defn append-contract-event [type payload]
+  (let [ev {"ts" (now-ms) "type" type "payload" payload}
+        line (str (json-stringify ev) "\n")]
+    (file-append CONTRACT-EVENTS-PATH line)
+    ev))
+
+; ── 전체 이벤트 ─────────────────────────────────────────────
+(defn read-contract-events []
+  (if (not (file-exists CONTRACT-EVENTS-PATH))
+    []
+    (let [raw (file-read CONTRACT-EVENTS-PATH)
+          lines (str-lines raw)
+          non-empty (filter (fn [l] (not (str-blank? l))) lines)]
+      (map (fn [l] (json-parse l)) non-empty))))
+
+(defn contract-events-of-type [type]
+  (filter (fn [e] (= (get e "type") type)) (read-contract-events)))
+
+(defn contract-events-for-id [id]
+  (filter
+    (fn [e] (= (get (get e "payload") "id") id))
+    (read-contract-events)))
+
+; ── status: draft / active / expired ───────────────────────
+(defn compute-contract-status [signed-payload period-end]
+  (cond
+    (nil? signed-payload)                  "draft"
+    (and (not (nil? period-end))
+         (< period-end (now-ms)))          "expired"
+    :else                                  "active"))
+
+; ── expiring_soon: active + 14일 이내 만료 (ms 단위 비교) ──
+; 주의: date-diff floor 연산으로 NOW timing 차이 시 경계 오차 → ms 직접 비교
+(defn contract-expiring-soon? [status period-end]
+  (and (= status "active")
+       (not (nil? period-end))
+       (let [diff (- period-end (now-ms))]
+         (and (>= diff 0) (<= diff 1209600000)))))  ; 14 * 86400000
+
+; ── 단일 계약 projection ───────────────────────────────────
+(defn project-contract [id]
+  (let [evs (contract-events-for-id id)
+        created-list (filter (fn [e] (= (get e "type") "contract.created")) evs)
+        signed-list  (filter (fn [e] (= (get e "type") "contract.signed")) evs)]
+    (if (= (length created-list) 0)
+      nil
+      (let [c (get (get created-list 0) "payload")
+            created-ts (get (get created-list 0) "ts")
+            signed (if (> (length signed-list) 0)
+                     (get (get signed-list 0) "payload") nil)
+            status (compute-contract-status signed (get c "period_end"))
+            signature (if (not (nil? signed))
+                        {"signer_name" (get signed "signer_name")
+                         "signer_role" (get signed "signer_role")
+                         "signed_at"   (get signed "signed_at")
+                         "note"        (get signed "note")}
+                        nil)]
+        {"id"            id
+         "title"         (get c "title")
+         "party_a"       (get c "party_a")
+         "party_b"       (get c "party_b")
+         "scope"         (get c "scope")
+         "period_start"  (get c "period_start")
+         "period_end"    (get c "period_end")
+         "amount_krw"    (get c "amount_krw")
+         "vat_included"  (get c "vat_included")
+         "payment_terms" (get c "payment_terms")
+         "memo"          (get c "memo")
+         "created_at"    created-ts
+         "status"        status
+         "signature"     signature
+         "expiring_soon" (contract-expiring-soon? status (get c "period_end"))}))))
+
+; ── 전체 계약 리스트 projection ────────────────────────────
+; 주의: list-contracts 는 v11 빌트인 (effect contract 시스템). all-contracts 로 회피
+(defn all-contracts []
+  (let [created (contract-events-of-type "contract.created")
+        ids (map (fn [e] (get (get e "payload") "id")) created)
+        items (map (fn [id] (project-contract id)) ids)]
+    (compact items)))
+
+; ── 만료 임박 계약 ─────────────────────────────────────────
+(defn expiring-soon-contracts []
+  (filter (fn [c] (get c "expiring_soon")) (all-contracts)))
+
+; ── ID 생성 ─────────────────────────────────────────────────
+(defn make-contract-id []
+  (str "ctr-" (now-ms) "-" (str-slice (uuid) 0 6)))

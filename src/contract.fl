@@ -1,0 +1,209 @@
+; soloflow contract.fl — M2 contract 6 라우트 핸들러
+
+; ── status → badge HTML ────────────────────────────────────
+(defn contract-badge [st]
+  (cond
+    (= st "draft")    "<span class=\"badge b-open\">미서명</span>"
+    (= st "active")   "<span class=\"badge b-paid\">유효</span>"
+    (= st "expired")  "<span class=\"badge b-overdue\">만료</span>"
+    :else             "<span class=\"badge b-open\">—</span>"))
+
+; ── GET /contracts : 전체 리스트 + 필터 ────────────────────
+(defn handle-contracts-list [req]
+  (let [filter-q (get (get req "query") "status")
+        all (all-contracts)
+        items (if (or (nil? filter-q) (str-blank? filter-q))
+                all
+                (filter (fn [c] (= (get c "status") filter-q)) all))
+        expiring (expiring-soon-contracts)
+        body (str
+          "<h1>계약 (" (str (length items)) "건)</h1>"
+          (if (> (length expiring) 0)
+            (str "<div class=\"card\" style=\"border-color:#dc3545\"><strong>⚠ 만료 임박 (14일 이내) " (str (length expiring)) "건</strong></div>")
+            "")
+          "<p>"
+            "<a href=\"/contracts\">전체</a> · "
+            "<a href=\"/contracts?status=draft\">미서명</a> · "
+            "<a href=\"/contracts?status=active\">유효</a> · "
+            "<a href=\"/contracts?status=expired\">만료</a>"
+          "</p>"
+          (if (= (length items) 0)
+            "<p class=\"muted\">계약이 없습니다. <a href=\"/contracts/new\">새 계약 작성</a></p>"
+            (render-contract-table items)))]
+    (server-html (layout "계약" body))))
+
+(defn render-contract-table [items]
+  (str
+    "<table><thead><tr>"
+    "<th>제목</th><th>당사자</th><th>대금</th><th>기간</th><th>상태</th><th>임박</th>"
+    "</tr></thead><tbody>"
+    (reduce
+      (fn [acc c]
+        (str acc
+          "<tr>"
+          "<td><a href=\"/contracts/" (esc (get c "id")) "\">" (esc (get c "title")) "</a></td>"
+          "<td>" (esc (get c "party_a")) " ↔ " (esc (get c "party_b")) "</td>"
+          "<td class=\"right\">" (money (get c "amount_krw")) "</td>"
+          "<td>" (fmt-date (get c "period_start")) " ~ " (fmt-date (get c "period_end")) "</td>"
+          "<td>" (contract-badge (get c "status")) "</td>"
+          "<td>" (if (get c "expiring_soon") "<strong style=\"color:#dc3545\">임박</strong>" "—") "</td>"
+          "</tr>"))
+      ""
+      items)
+    "</tbody></table>"))
+
+; ── GET /contracts/new : 폼 ────────────────────────────────
+(defn handle-contract-new-form [req]
+  (let [today (date-format (now-ms) "yyyy-MM-dd")
+        plus180 (date-format (date-add (now-ms) "days" 180) "yyyy-MM-dd")
+        body (str
+          "<h1>새 계약</h1>"
+          "<form method=\"POST\" action=\"/contracts\">"
+            "<label>계약명<input name=\"title\" required placeholder=\"예: 웹사이트 리뉴얼 용역계약\"></label>"
+            "<label>갑 (발주자)<input name=\"party_a\" required></label>"
+            "<label>을 (수행자)<input name=\"party_b\" required></label>"
+            "<label>용역 범위<textarea name=\"scope\" rows=\"4\" placeholder=\"예: 메인 페이지 + 게시판 구축, 반응형 디자인 적용\"></textarea></label>"
+            "<label>계약 시작일<input name=\"period_start\" type=\"date\" value=\"" today "\" required></label>"
+            "<label>계약 종료일<input name=\"period_end\" type=\"date\" value=\"" plus180 "\" required></label>"
+            "<label>용역 대금 (KRW, 정수)<input name=\"amount_krw\" type=\"number\" min=\"0\" required></label>"
+            "<label>"
+              "<input type=\"checkbox\" name=\"vat_included\" value=\"1\"> 부가세 포함 (체크하지 않으면 별도)"
+            "</label>"
+            "<label>지급 조건<textarea name=\"payment_terms\" rows=\"3\" placeholder=\"예: 계약금 30% 착수 시, 중도금 30% 중간 검수 시, 잔금 40% 최종 납품 시\"></textarea></label>"
+            "<label>기타 사항 (선택)<textarea name=\"memo\" rows=\"2\"></textarea></label>"
+            "<button type=\"submit\">계약 생성</button>"
+          "</form>")]
+    (server-html (layout "새 계약" body))))
+
+; ── POST /contracts : contract.created 이벤트 ──────────────
+(defn handle-contract-create [req]
+  (let [body (get req "body")
+        title (form-field body "title")
+        party_a (form-field body "party_a")
+        party_b (form-field body "party_b")
+        scope (form-field body "scope")
+        ps (form-field body "period_start")
+        pe (form-field body "period_end")
+        amount (form-num body "amount_krw")
+        vat-raw (form-field body "vat_included")
+        vat (not (str-blank? vat-raw))
+        terms (form-field body "payment_terms")
+        memo (form-field body "memo")]
+    (if (or (str-blank? title) (str-blank? party_a) (str-blank? party_b)
+            (str-blank? ps) (str-blank? pe))
+      (server-status 400 "필수 필드 누락")
+      (let [id (make-contract-id)
+            payload {"id" id
+                     "title" title
+                     "party_a" party_a
+                     "party_b" party_b
+                     "scope" scope
+                     "period_start" (date-parse ps)
+                     "period_end" (date-parse pe)
+                     "amount_krw" amount
+                     "vat_included" vat
+                     "payment_terms" terms
+                     "memo" memo}]
+        (append-contract-event "contract.created" payload)
+        (server-redirect (str "/contracts/" id))))))
+
+; ── GET /contracts/:id : 상세 + timeline ───────────────────
+(defn handle-contract-detail [req]
+  (let [id (get (get req "params") "id")
+        c (project-contract id)]
+    (if (nil? c)
+      (server-status 404 "계약을 찾을 수 없습니다")
+      (server-html (layout (str "계약 · " (str-slice (get c "title") 0 40)) (render-contract-detail c))))))
+
+(defn render-contract-detail [c]
+  (str
+    "<h1>" (esc (get c "title")) " " (contract-badge (get c "status")) "</h1>"
+    (if (get c "expiring_soon")
+      "<div class=\"card\" style=\"border-color:#dc3545\"><strong style=\"color:#dc3545\">⚠ 만료 임박 (14일 이내)</strong></div>"
+      "")
+    "<div class=\"card\">"
+      "<table>"
+      "<tr><th>계약 ID</th><td><code>" (esc (get c "id")) "</code></td></tr>"
+      "<tr><th>갑 (발주자)</th><td>" (esc (get c "party_a")) "</td></tr>"
+      "<tr><th>을 (수행자)</th><td>" (esc (get c "party_b")) "</td></tr>"
+      "<tr><th>용역 범위</th><td>" (esc (get c "scope")) "</td></tr>"
+      "<tr><th>기간</th><td>" (fmt-date (get c "period_start")) " ~ " (fmt-date (get c "period_end")) "</td></tr>"
+      "<tr><th>대금</th><td>" (money (get c "amount_krw")) " (부가세 " (if (get c "vat_included") "포함" "별도") ")</td></tr>"
+      "<tr><th>지급 조건</th><td>" (esc (get c "payment_terms")) "</td></tr>"
+      "<tr><th>기타</th><td>" (esc (get c "memo")) "</td></tr>"
+      "</table>"
+    "</div>"
+    (render-signature-section c)
+    "<p><a href=\"/contracts/" (esc (get c "id")) "/print\" target=\"_blank\">🖨 인쇄용 보기</a></p>"))
+
+(defn render-signature-section [c]
+  (let [sig (get c "signature")]
+    (if (nil? sig)
+      (str
+        "<h2>서명</h2>"
+        "<form method=\"POST\" action=\"/contracts/" (esc (get c "id")) "/sign\">"
+          "<label>서명자명<input name=\"signer_name\" required></label>"
+          "<label>역할<input name=\"signer_role\" value=\"을\" required></label>"
+          "<label>비고 (선택)<input name=\"note\"></label>"
+          "<button type=\"submit\">서명 완료 기록</button>"
+        "</form>")
+      (str
+        "<h2>서명 완료</h2>"
+        "<div class=\"card\">"
+          "<p><strong>" (esc (get sig "signer_name")) "</strong> (" (esc (get sig "signer_role")) ") · "
+          (fmt-date (get sig "signed_at"))
+          (if (or (nil? (get sig "note")) (str-blank? (str (get sig "note"))))
+            ""
+            (str " · " (esc (get sig "note"))))
+          "</p>"
+        "</div>"))))
+
+; ── POST /contracts/:id/sign : contract.signed 이벤트 ──────
+(defn handle-contract-sign [req]
+  (let [id (get (get req "params") "id")
+        c (project-contract id)
+        body (get req "body")
+        name (form-field body "signer_name")
+        role (form-field body "signer_role")
+        note (form-field body "note")]
+    (cond
+      (nil? c)               (server-status 404 "계약을 찾을 수 없습니다")
+      (not (nil? (get c "signature"))) (server-status 409 "이미 서명된 계약입니다")
+      (str-blank? name)      (server-status 400 "서명자명 누락")
+      :else (do
+        (append-contract-event "contract.signed"
+                               {"id" id
+                                "signer_name" name
+                                "signer_role" role
+                                "signed_at" (now-ms)
+                                "note" note})
+        (server-redirect (str "/contracts/" id))))))
+
+; ── GET /contracts/:id/print : 단독 인쇄 페이지 ───────────
+(defn handle-contract-print [req]
+  (let [id (get (get req "params") "id")
+        c (project-contract id)]
+    (if (nil? c)
+      (server-status 404 "계약을 찾을 수 없습니다")
+      (server-html (render-print-page c)))))
+
+(defn render-print-page [c]
+  (let [sig (get c "signature")
+        contract-text (render-contract-text c)
+        sig-block (if (nil? sig)
+                    "\n[ 서명 미완료 ]"
+                    (str "\n\n갑: ____________________  (인)\n\n을: " (get sig "signer_name") "  (" (get sig "signer_role") ")  서명일: " (fmt-date (get sig "signed_at")) "  (인)"))]
+    (str "<!DOCTYPE html>
+<html lang=\"ko\"><head>
+<meta charset=\"utf-8\">
+<title>" (esc (get c "title")) " — 인쇄</title>
+<style>
+  body{font-family:'Noto Serif KR','Malgun Gothic',serif;max-width:720px;margin:1.5rem auto;padding:1rem;color:#000;background:#fff;line-height:1.7}
+  pre{white-space:pre-wrap;font-family:inherit;font-size:14px}
+  .nope{margin-bottom:1rem}
+  @media print { .nope { display:none } body { margin:0 } }
+</style>
+</head><body>
+<div class=\"nope\"><a href=\"/contracts/" (esc (get c "id")) "\">← 돌아가기</a> · <em>인쇄: <kbd>Ctrl+P</kbd> (또는 ⌘+P) → PDF 저장</em></div>
+<pre>" (esc contract-text) sig-block "</pre>
+</body></html>")))

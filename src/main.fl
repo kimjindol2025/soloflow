@@ -4,14 +4,25 @@
 (load "src/render.fl")
 (load "src/state.fl")
 (load "src/invoice.fl")
+(load "src/contract-template.fl")
+(load "src/contract-state.fl")
+(load "src/contract.fl")
 
-; ── 라우트 등록 (6개) ──────────────────────────────────────
+; ── 라우트 등록 (12개) ─────────────────────────────────────
+; invoice 6
 (server-get  "/"                    "handle-index")
 (server-get  "/invoices"            "handle-invoices")
 (server-get  "/invoices/new"        "handle-new-form")
 (server-post "/invoices"            "handle-create")
 (server-get  "/invoices/:id"        "handle-detail")
 (server-post "/invoices/:id/pay"    "handle-pay")
+; contract 6
+(server-get  "/contracts"            "handle-contracts-list")
+(server-get  "/contracts/new"        "handle-contract-new-form")
+(server-post "/contracts"            "handle-contract-create")
+(server-get  "/contracts/:id"        "handle-contract-detail")
+(server-post "/contracts/:id/sign"   "handle-contract-sign")
+(server-get  "/contracts/:id/print"  "handle-contract-print")
 
 (println "soloflow listening on http://localhost:41955")
 (server-start 41955)

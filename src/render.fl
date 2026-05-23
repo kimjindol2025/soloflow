@@ -80,7 +80,9 @@
 <nav>
   <a href=\"/\">홈</a>
   <a href=\"/invoices\">송장</a>
-  <a href=\"/invoices/new\">+ 새 송장</a>
+  <a href=\"/contracts\">계약</a>
+  <a href=\"/invoices/new\">+ 송장</a>
+  <a href=\"/contracts/new\">+ 계약</a>
 </nav>
 " body-html "
 </body></html>"))

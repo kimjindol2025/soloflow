@@ -12,7 +12,7 @@
     "not": "팀 협업 도구 아님 (단일 사용자 single-tenant). 회계 정산 SaaS 아님 (세무사 대체 X — 보조 데이터 제공만). 메신저·CRM 통합 허브 아님 (외부 SaaS API 흡수 금지). 모바일 native 앱 아님 v1 (순수 SSR 웹). 다국가 세무/통화 자동 변환 v1 미지원 (KRW 단일)"
   },
 
-  "hot": "M1-done",
+  "hot": "M2-done",
 
   "constitution": {
     "1": "AI 전용. 인간 가독성을 위한 구조 타협 금지",
@@ -282,16 +282,114 @@
 
     "M1-done": {
       "t": "task",
-      "v": "M1 invoice MVP 완료 — 다음 모듈(M2 contract) 착수 전 사용자 협의 대기",
+      "v": "M1 invoice MVP 완료 — M2 contract 으로 이동 (2026-05-23)",
       "spec": {
         "completed": ["task-003 (S0 init)", "task-001 (M1 MVP)", "task-004 (Gogs push)", "task-002 (projection 검증)"],
-        "next_module_candidates": ["M2 계약 (contract template + 만료 알림)", "M3 일정 (project timeline + daily focus)", "M4 집중 (Pomodoro + 습관)"]
+        "decided_next": "M2 계약 — A 압축형 + 이벤트 2종 + 자체 minimal 용역계약 (사용자 결정 2026-05-23)"
       },
-      "scope_in": ["사용자와 다음 모듈 선정 협의", "M2~M4 우선순위 재확인"],
+      "scope_in": ["다음 모듈 선정"],
+      "entry": ["SPEC.airc"],
+      "check": ["task-005 신설"],
+      "verified": true,
+      "verified_at": "2026-05-23",
+      "verified_evidence": "사용자 결정 = A + 2종 + 자체 minimal",
+      "next": ["task-005"]
+    },
+
+    "task-005": {
+      "t": "task",
+      "v": "M2 contract MVP — 자체 minimal 용역계약 + created/signed 이벤트 2종 + SSR 6 라우트",
+      "spec": {
+        "domain_events": {
+          "contract.created": "{id, title, party_a, party_b, scope, period_start, period_end, amount_krw, vat_included, payment_terms, memo}",
+          "contract.signed":  "{id, signer_name, signer_role, signed_at, note}"
+        },
+        "storage": {
+          "underlying": "JSONL — data/contract-events.jsonl (invoice 와 별도 파일 — dec-008)",
+          "schema":     "{ts: number, type: string, payload: object}. utf-8 JSON",
+          "writer":     "(file-append path (str (json-stringify ev) \"\\n\"))",
+          "reader":     "(file-read path) → (str-lines) → (map json-parse) → caller filter"
+        },
+        "state_projection": {
+          "contract_status": "events scan → draft (signed 이벤트 없음) / active (signed + period_end >= now) / expired (signed + period_end < now)",
+          "expiring_soon":   "active + period_end - now <= 14일 → 임박 표시 (GET 시점 계산, cron 없음)"
+        },
+        "ssr_routes": {
+          "GET /contracts":              "전체 리스트 + status 필터 (draft/active/expired)",
+          "GET /contracts/new":          "용역계약 minimal 템플릿 폼",
+          "POST /contracts":             "contract.created 이벤트 기록 → /contracts/:id redirect",
+          "GET /contracts/:id":          "상세 + 이벤트 timeline + 인쇄용 계약문 (브라우저 인쇄 → PDF 우회)",
+          "POST /contracts/:id/sign":    "contract.signed 이벤트 기록",
+          "GET /contracts/:id/print":    "단독 인쇄 페이지 (네비 제거, 깔끔 레이아웃)"
+        },
+        "template_minimal": {
+          "title":          "용역계약서",
+          "sections":       ["당사자(갑/을)", "용역 범위", "계약 기간", "용역 대금", "지급 조건", "비밀유지", "기타"],
+          "variable_form":  "{{변수명}} (str-replace-all 치환)",
+          "boilerplate":    "고정 문구 + 변수만 사용자 입력. v1 = 1종 minimal. 다중 템플릿/표준계약서 흡수는 v2 후보"
+        }
+      },
+      "scope_in": [
+        "domain events 2종 (contract.created · contract.signed)",
+        "contract ID 생성 (sortable — startTs+seq, invoice 패턴 답습)",
+        "state projection (status / expiring_soon)",
+        "SSR 라우트 6개 (GET /contracts · /contracts/new · /contracts/:id · /contracts/:id/print, POST /contracts · /:id/sign)",
+        "minimal 용역계약 템플릿 1종 (변수 치환)",
+        "네비게이션에 '계약' 메뉴 추가 (render.fl layout)",
+        "tests/contract-test.fl — assert 기반 단위 검증 (status 4종 + projection)"
+      ],
+      "scope_out_v1": [
+        "PDF 자동 생성 (브라우저 인쇄로 우회)",
+        "디지털 서명 (DocuSign 등 외부 SaaS)",
+        "다중 템플릿 (디자인/번역/영상 등)",
+        "문체부 표준계약서 통합",
+        "cron 만료 알림 (Discord/이메일)",
+        "스코프 체크리스트",
+        "invoice 자동 연결 (계약→송장 발행)",
+        "amended/terminated 이벤트 (v1.1 후보)"
+      ],
+      "entry": [
+        "src/contract.fl",
+        "src/contract-state.fl",
+        "src/contract-template.fl",
+        "src/render.fl (네비 수정)",
+        "src/main.fl (라우트 등록)",
+        "tests/contract-test.fl"
+      ],
+      "check": [
+        "POST /contracts → contract.created 이벤트 JSONL 기록",
+        "POST /contracts/:id/sign → contract.signed 이벤트 + status active 전환",
+        "GET /contracts/:id/print → 변수 치환된 계약문 렌더링",
+        "expiring_soon: period_end - 14일 경계 정확",
+        "tests/contract-test.fl PASS"
+      ],
+      "verified": true,
+      "verified_at": "2026-05-23",
+      "verified_evidence": "tests/contract-test.fl 30/30 PASS + live E2E 14 체크 (폼/created/sign/print/네비/리스트) 모두 통과",
+      "next": []
+    },
+
+    "M2-done": {
+      "t": "task",
+      "v": "M2 contract MVP 완료 (2026-05-23) — 다음 모듈 사용자 결정 대기",
+      "spec": {
+        "completed_modules": ["M1 invoice", "M2 contract"],
+        "remaining_candidates": ["M3 일정 (project timeline + daily focus)", "M4 집중 (Pomodoro + 습관)", "M1.1 invoice.sent/cancelled", "M2.1 cron 만료 알림", "M2.2 다중 템플릿"]
+      },
+      "scope_in": ["다음 모듈 선정"],
       "entry": ["SPEC.airc"],
       "check": ["사용자 결정"],
       "verified": false,
       "next": []
+    },
+
+    "err-003": {
+      "t": "error",
+      "v": "list-contracts 가 v11 빌트인 (effect contract 시스템) 과 충돌. 5개 effect-contract 객체 (id=null) 반환",
+      "cause": "eval-builtins.ts:2448 case 'list-contracts' — effect/SLA contract 시스템 빌트인. err-001(h) 동일 패턴",
+      "fix": "함수명 list-contracts → all-contracts. contract.fl·tests 일괄 변경",
+      "repeat_risk": "generic 명사 (list-X / get-X / clear-X) 가 v11 effect/runtime 시스템과 충돌 가능. 명명 전 eval-builtins.ts case 검색",
+      "date": "2026-05-23"
     },
 
     "err-002": {
@@ -310,6 +408,54 @@
       "fix": "render.fl 의 h → esc 로 리네임. invoice.fl 의 모든 (h ...) 호출도 (esc ...) 로 교체",
       "repeat_risk": "다른 단글자 함수명도 충돌 가능 (예: c, e, p). 신규 헬퍼는 3자 이상 권장",
       "date": "2026-05-22"
+    },
+
+    "dec-008": {
+      "t": "decision",
+      "v": "M2 contract 의 storage = data/contract-events.jsonl 별도 파일. invoice 와 분리 (2026-05-23)",
+      "why": [
+        "도메인 분리 — invoice / contract 는 다른 aggregate. 한 파일에 섞으면 scan 시 도메인 필터 비용",
+        "백업 단위 분리 가능 (계약은 장기 보존, 송장은 회계 주기)",
+        "module 별 EVENTS-PATH override 패턴 일관성 — INVOICE_EVENTS_PATH / CONTRACT_EVENTS_PATH (테스트 격리)"
+      ],
+      "rules": [
+        "data/contract-events.jsonl 단일 파일",
+        "환경변수 SOLOFLOW_CONTRACT_EVENTS_PATH 로 override 가능",
+        "이벤트 type 명명: 'contract.<verb>' (snake.dotted)"
+      ],
+      "lock": true
+    },
+
+    "dec-009": {
+      "t": "decision",
+      "v": "PDF/e-sign 미포함 v1 — 브라우저 인쇄 + 자체 서명자명 기록만",
+      "why": [
+        "v11 stdlib 에 PDF lib 없음. 외부 PDF lib 도입 시 zero-dep (dec-007 외부 npm 0) 위반",
+        "DocuSign 등 외부 e-sign SaaS 는 self-hosting 정신 + single-tenant 정합 위반",
+        "MVP 가치 = 계약 데이터 기록 + 인쇄. PDF·서명은 사용자 OS 의 인쇄 기능으로 우회"
+      ],
+      "rules": [
+        "GET /contracts/:id/print 페이지가 깔끔한 인쇄 레이아웃 제공 (네비/CSS 분리)",
+        "서명은 contract.signed 이벤트의 signer_name 텍스트 필드만",
+        "v2 후보: 외부 PDF lib 없는 PostScript 직접 출력 또는 브라우저 print-to-PDF API"
+      ],
+      "lock": false
+    },
+
+    "dec-010": {
+      "t": "decision",
+      "v": "M2 v1 = 자체 minimal 용역계약 1종. 다중 템플릿·표준계약서 v2 후보",
+      "why": [
+        "MVP 가치 검증 우선 — 사용자가 실제 계약 작성·서명 기록 흐름 사용하는지",
+        "다중 템플릿 도입 시 템플릿 선택 UI + 변수 schema 차이 + 검증 로직 폭발",
+        "문체부 표준계약서는 분야별 (디자인/번역/영상) 변수 차이 큼 → v2 cycle 별도"
+      ],
+      "rules": [
+        "src/contract-template.fl 에 minimal 용역계약 1종 함수만",
+        "변수 치환 패턴 '{{변수명}}' (str-replace-all)",
+        "v2 = 템플릿 선택 메뉴 + 분야별 schema"
+      ],
+      "lock": false
     },
 
     "dec-007": {
@@ -340,6 +486,8 @@
     {"rule": "Event sourcing — 직접 row update 금지 (dec-002)",                "why": "elog columnar append-only 정합. audit trail 자동 확보"},
     {"rule": "순수 SSR — JS 0 줄 (dec-005)",                                    "why": "MVP 범위·번들 복잡도 회피. v11 SSR primitive 로 충분"},
     {"rule": "Storage = JSONL append-only (dec-007 옵션 A)",                  "why": "v11 안에서 zero-dep 완결. row update 절대 금지 (dec-002 event-sourcing)"},
+    {"rule": "모듈별 JSONL 파일 분리 (dec-008) — invoice / contract / ...",     "why": "도메인 분리. scan 비용·백업 단위 분리"},
+    {"rule": "PDF/e-sign 외부 의존 금지 v1 (dec-009)",                          "why": "zero-dep + self-hosting. 브라우저 인쇄 + 자체 서명자명 기록만"},
     {"rule": "v11 본체 미접촉 (dec-006)",                                       "why": "본체 회귀 차단. v11 한계는 별도 백로그"},
     {"rule": "외부 npm runtime 의존 0 — package.json dependencies 비움",         "why": "zero-dep 정신 (v11/vcol/elog 계승). JSONL 옵션 A 정합"},
     {"rule": "blog API key·gogs 토큰 등 secret 평문 commit 금지",                "why": "2026-05-21 보안 정책. pre-commit secret scan 정합"},
@@ -358,7 +506,13 @@
     {"idea": "SQLite/SQL 도입",                              "why": "dec-007 — event sourcing 일관성. v11 sqlite stdlib 있으나 패러다임 혼합",                                            "final": true},
     {"idea": "Slack/Notion/Google Workspace 통합",            "why": "identity.not — 통합 허브 아님. 외부 SaaS API 흡수 시 zero-dep·통제 가능성 상실",                                  "final": true},
     {"idea": "사용자 인증 v1 포함",                          "why": "dec-004 — single-tenant. localhost/사설망 또는 reverse proxy basic auth 사용. v2 후보",                              "final": false},
-    {"idea": "Kakao/Naver/Google OAuth 로그인",               "why": "single-tenant 정신 위배 + 외부 OAuth 의존(zero-dep 위반) + 토큰 갱신·콘솔 등록 cycle 폭발. v2 인증 도입 시 v11 내장 session + (선택) 전화 인증 어댑터로 충분 (사용자 검토 2026-05-22)", "final": true}
+    {"idea": "Kakao/Naver/Google OAuth 로그인",               "why": "single-tenant 정신 위배 + 외부 OAuth 의존(zero-dep 위반) + 토큰 갱신·콘솔 등록 cycle 폭발. v2 인증 도입 시 v11 내장 session + (선택) 전화 인증 어댑터로 충분 (사용자 검토 2026-05-22)", "final": true},
+    {"idea": "M2 다중 계약 템플릿 v1 포함",                    "why": "dec-010 — 1종 minimal 만. 분야별(디자인/번역/영상) 변수 schema 차이 시 검증 로직 폭발", "final": false},
+    {"idea": "DocuSign·Adobe Sign 등 외부 e-sign SaaS",         "why": "dec-009 — self-hosting + single-tenant 정합 위반. 외부 SaaS 흡수 시 zero-dep 상실", "final": true},
+    {"idea": "PDF 자동 생성 라이브러리 (puppeteer·pdfkit)",     "why": "외부 npm 의존 (dec-007 위반). 브라우저 인쇄로 우회 가능 (dec-009)", "final": false},
+    {"idea": "분쟁 자동화 / 법률 자문 자동",                    "why": "soloflow 는 데이터 도구. 법률 자문은 변호사 영역. 책임 경계 명확화", "final": true},
+    {"idea": "계약-송장 자동 연결 v1",                         "why": "M2 v1 = contract 단독. invoice payload 의 contract_id 선택 필드는 v2 cycle (M1·M2 양방향 일관성 검증 필요)", "final": false},
+    {"idea": "contract.amended / contract.terminated 이벤트 v1", "why": "MVP 압축 — task-001 M1 패턴 답습 (created/payment 만). 정정·해지 흐름은 v1.1 후보", "final": false}
   ],
 
   "handoff": {

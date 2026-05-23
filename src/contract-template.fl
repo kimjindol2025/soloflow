@@ -1,0 +1,68 @@
+; soloflow contract-template.fl — minimal 용역계약 텍스트 + 변수 치환
+; dec-010: v1 = 1종 minimal. {{변수명}} 패턴, str-replace-all 치환
+
+; ── 변수 치환 ──────────────────────────────────────────────
+; vars = [["key" "value"] ["key2" "value2"] ...]
+(defn fill-vars [text vars]
+  (reduce
+    (fn [acc pair]
+      (str-replace-all acc (str "{{" (get pair 0) "}}") (str (get pair 1))))
+    text
+    vars))
+
+; ── 자체 minimal 용역계약 본문 (boilerplate + {{변수}}) ────
+(defn minimal-contract-text []
+  "용역계약서
+
+본 계약은 {{party_a}}(이하 \"갑\")과(와) {{party_b}}(이하 \"을\")가 아래와 같이 체결한다.
+
+제1조 (계약 명칭)
+  본 계약의 명칭은 \"{{title}}\"(이)다.
+
+제2조 (용역 범위)
+  을은 갑에게 다음 용역을 제공한다.
+  {{scope}}
+
+제3조 (계약 기간)
+  본 계약의 유효 기간은 {{period_start}}부터 {{period_end}}까지로 한다.
+
+제4조 (용역 대금)
+  갑은 을에게 용역 대금으로 금 {{amount_text}}원을 지급한다.
+  부가가치세는 위 금액에 {{vat_text}}한다.
+
+제5조 (지급 조건)
+  {{payment_terms}}
+
+제6조 (비밀유지)
+  양 당사자는 본 계약 수행 중 알게 된 상대방의 영업비밀, 개인정보, 거래내용 등을 본 계약 종료 후에도 상대방의 서면 동의 없이 외부에 누설하거나 본 계약 외의 목적에 사용하지 아니한다.
+
+제7조 (기타)
+  {{memo}}
+
+작성일: {{created_date}}
+")
+
+; ── payload → 변수 배열 변환 + 렌더 ────────────────────────
+(defn render-contract-text [payload]
+  (let [amt (get payload "amount_krw")
+        amt-str (group-thousands (str amt) (length (str amt)))
+        vat-text (if (get payload "vat_included") "포함" "별도로 가산")
+        memo-raw (get payload "memo")
+        memo-text (if (or (nil? memo-raw) (str-blank? (str memo-raw))) "(해당 사항 없음)" memo-raw)
+        scope-raw (get payload "scope")
+        scope-text (if (or (nil? scope-raw) (str-blank? (str scope-raw))) "(상세 협의)" scope-raw)
+        payment-raw (get payload "payment_terms")
+        payment-text (if (or (nil? payment-raw) (str-blank? (str payment-raw))) "(별도 협의)" payment-raw)
+        created (get payload "created_at")
+        vars [["party_a"       (get payload "party_a")]
+              ["party_b"       (get payload "party_b")]
+              ["title"         (get payload "title")]
+              ["scope"         scope-text]
+              ["period_start"  (fmt-date (get payload "period_start"))]
+              ["period_end"    (fmt-date (get payload "period_end"))]
+              ["amount_text"   amt-str]
+              ["vat_text"      vat-text]
+              ["payment_terms" payment-text]
+              ["memo"          memo-text]
+              ["created_date"  (fmt-date (if (nil? created) (now-ms) created))]]]
+    (fill-vars (minimal-contract-text) vars)))

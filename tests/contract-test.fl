@@ -1,0 +1,149 @@
+; soloflow contract-test.fl — task-005 검증 (status 3종 + expiring_soon + 변수 치환)
+; 실행: SOLOFLOW_CONTRACT_EVENTS_PATH=tests/data/contract-test.jsonl node /root/kim/freelang-v11/bootstrap.js run tests/contract-test.fl
+
+(load "src/render.fl")
+(load "src/state.fl")
+(load "src/contract-template.fl")
+(load "src/contract-state.fl")
+
+(println "═══ soloflow task-005 contract tests ═══")
+(println "")
+
+(define PASS-COUNT (atom 0))
+(define FAIL-COUNT (atom 0))
+
+(defn check [label actual expected]
+  (if (= actual expected)
+    (do (swap! PASS-COUNT + 1)
+        (println (str "  ✓ " label)))
+    (do (swap! FAIL-COUNT + 1)
+        (println (str "  ✗ " label))
+        (println (str "      expected: " expected))
+        (println (str "      actual:   " actual)))))
+
+(println (str "CONTRACT-EVENTS-PATH = " CONTRACT-EVENTS-PATH))
+(if (not (= CONTRACT-EVENTS-PATH "tests/data/contract-test.jsonl"))
+  (do (println "❌ SOLOFLOW_CONTRACT_EVENTS_PATH 미설정")
+      (throw "env var missing"))
+  nil)
+
+(if (file-exists CONTRACT-EVENTS-PATH) (file-delete CONTRACT-EVENTS-PATH) nil)
+
+(defn write-ev [ts type payload]
+  (file-append CONTRACT-EVENTS-PATH
+    (str (json-stringify {"ts" ts "type" type "payload" payload}) "\n")))
+
+(define NOW (now-ms))
+(define D1 86400000)
+(define DAY-OFFSET (fn [n] (+ NOW (* D1 n))))
+
+; ── 테스트 1 : compute-contract-status 3종 ─────────────────
+(println "[1] compute-contract-status")
+(check "signed=nil → draft"
+       (compute-contract-status nil (DAY-OFFSET 30)) "draft")
+(check "signed + period_end 미래 → active"
+       (compute-contract-status {"signer_name" "x"} (DAY-OFFSET 30)) "active")
+(check "signed + period_end 과거 → expired"
+       (compute-contract-status {"signer_name" "x"} (DAY-OFFSET -5)) "expired")
+(println "")
+
+; ── 테스트 2 : expiring_soon 경계값 ────────────────────────
+(println "[2] contract-expiring-soon? (14일 경계)")
+(check "active + 7일 후 만료 → 임박"
+       (contract-expiring-soon? "active" (DAY-OFFSET 7)) true)
+(check "active + 14일 후 만료 → 임박 (경계 안)"
+       (contract-expiring-soon? "active" (DAY-OFFSET 14)) true)
+(check "active + 15일 후 만료 → 임박 아님 (경계 밖)"
+       (contract-expiring-soon? "active" (DAY-OFFSET 15)) false)
+(check "draft + 7일 후 만료 → 임박 아님 (status 조건)"
+       (contract-expiring-soon? "draft" (DAY-OFFSET 7)) false)
+(check "expired 는 임박 아님"
+       (contract-expiring-soon? "expired" (DAY-OFFSET -10)) false)
+(println "")
+
+; ── 테스트 3 : Fixture 3종 projection ──────────────────────
+(println "[3] Fixture projection (draft / active+임박 / expired)")
+
+; 3-1. draft 계약 (signed 이벤트 없음)
+(write-ev (DAY-OFFSET -3) "contract.created"
+  {"id" "ctr-draft" "title" "디자인 용역" "party_a" "갑사" "party_b" "나"
+   "scope" "로고 + 명함" "period_start" (DAY-OFFSET 0) "period_end" (DAY-OFFSET 60)
+   "amount_krw" 1500000 "vat_included" false "payment_terms" "50/50" "memo" ""})
+
+; 3-2. active + 임박 (10일 후 만료)
+(write-ev (DAY-OFFSET -30) "contract.created"
+  {"id" "ctr-active" "title" "번역 용역" "party_a" "X사" "party_b" "나"
+   "scope" "메뉴얼" "period_start" (DAY-OFFSET -25) "period_end" (DAY-OFFSET 10)
+   "amount_krw" 800000 "vat_included" true "payment_terms" "완료 후 일시불" "memo" ""})
+(write-ev (DAY-OFFSET -25) "contract.signed"
+  {"id" "ctr-active" "signer_name" "홍길동" "signer_role" "을"
+   "signed_at" (DAY-OFFSET -25) "note" ""})
+
+; 3-3. expired (서명 후 기간 지남)
+(write-ev (DAY-OFFSET -90) "contract.created"
+  {"id" "ctr-expired" "title" "영상 편집" "party_a" "Y사" "party_b" "나"
+   "scope" "광고 30초" "period_start" (DAY-OFFSET -85) "period_end" (DAY-OFFSET -10)
+   "amount_krw" 2000000 "vat_included" true "payment_terms" "30/70" "memo" ""})
+(write-ev (DAY-OFFSET -80) "contract.signed"
+  {"id" "ctr-expired" "signer_name" "이순신" "signer_role" "을"
+   "signed_at" (DAY-OFFSET -80) "note" ""})
+
+(define C-DRAFT (project-contract "ctr-draft"))
+(define C-ACTIVE (project-contract "ctr-active"))
+(define C-EXPIRED (project-contract "ctr-expired"))
+
+(check "draft: status"          (get C-DRAFT "status")    "draft")
+(check "draft: signature nil"   (get C-DRAFT "signature") nil)
+(check "draft: expiring_soon=false (서명 안 됨)" (get C-DRAFT "expiring_soon") false)
+
+(check "active: status"         (get C-ACTIVE "status")   "active")
+(check "active: signature 존재" (not (nil? (get C-ACTIVE "signature"))) true)
+(check "active: signer 홍길동"  (get (get C-ACTIVE "signature") "signer_name") "홍길동")
+(check "active: expiring_soon=true (10일 후 만료)" (get C-ACTIVE "expiring_soon") true)
+
+(check "expired: status"        (get C-EXPIRED "status")  "expired")
+(check "expired: signer 이순신" (get (get C-EXPIRED "signature") "signer_name") "이순신")
+(check "expired: expiring_soon=false (이미 만료)" (get C-EXPIRED "expiring_soon") false)
+(println "")
+
+; ── 테스트 4 : list-contracts + expiring ───────────────────
+(println "[4] list-contracts + expiring-soon-contracts")
+(check "전체 = 3"                (length (all-contracts)) 3)
+(check "expiring-soon = 1 (active만)" (length (expiring-soon-contracts)) 1)
+(println "")
+
+; ── 테스트 5 : fill-vars 변수 치환 ─────────────────────────
+(println "[5] fill-vars 변수 치환")
+(check "단일 변수"
+       (fill-vars "Hello {{name}}" [["name" "World"]])
+       "Hello World")
+(check "다중 변수"
+       (fill-vars "{{a}} + {{b}} = {{c}}"
+                  [["a" "1"] ["b" "2"] ["c" "3"]])
+       "1 + 2 = 3")
+(check "변수 없으면 그대로"
+       (fill-vars "no vars here" [["x" "y"]])
+       "no vars here")
+(check "같은 변수 여러 번"
+       (fill-vars "{{x}}-{{x}}" [["x" "A"]])
+       "A-A")
+(println "")
+
+; ── 테스트 6 : render-contract-text 실제 렌더 ──────────────
+(println "[6] render-contract-text 통합")
+(define RENDERED (render-contract-text C-ACTIVE))
+(check "갑 치환됨"      (str-includes RENDERED "X사")    true)
+(check "을 치환됨"      (str-includes RENDERED "나")     true)
+(check "title 치환됨"   (str-includes RENDERED "번역 용역") true)
+(check "amount 치환됨"  (str-includes RENDERED "800,000") true)
+(check "부가세 포함"    (str-includes RENDERED "포함")   true)
+(check "{{ 미치환 없음" (str-includes RENDERED "{{")     false)
+(println "")
+
+(println "═══════════════════════════════════════════")
+(println (str "결과: " @PASS-COUNT " PASS / " @FAIL-COUNT " FAIL"))
+(println "═══════════════════════════════════════════")
+
+(if (> @FAIL-COUNT 0)
+  (throw (str @FAIL-COUNT " test(s) failed"))
+  (println "✅ 모든 테스트 통과"))
