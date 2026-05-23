@@ -8,6 +8,7 @@
         unpaid (unpaid-invoices)
         unpaid-total (sum (map (fn [inv] (get inv "balance")) unpaid))
         due (due-today)
+        due-week (due-this-week)
         body (str
           "<h1>이번 달 요약 (" (esc now-ym) ")</h1>"
           "<div class=\"grid\">"
@@ -15,6 +16,7 @@
             "<div class=\"stat\"><div class=\"v\">" (money unpaid-total) "</div><div class=\"l\">총 미수금</div></div>"
             "<div class=\"stat\"><div class=\"v\">" (str (length unpaid)) "</div><div class=\"l\">미수 송장 수</div></div>"
             "<div class=\"stat\"><div class=\"v\">" (str (length due)) "</div><div class=\"l\">오늘 due</div></div>"
+            "<div class=\"stat\"><div class=\"v\">" (str (length due-week)) "</div><div class=\"l\">이번 주 due (7일 이내)</div></div>"
           "</div>"
           "<h2>오늘 due 인 송장</h2>"
           (if (= (length due) 0)

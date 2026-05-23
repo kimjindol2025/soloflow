@@ -12,7 +12,7 @@
     "not": "팀 협업 도구 아님 (단일 사용자 single-tenant). 회계 정산 SaaS 아님 (세무사 대체 X — 보조 데이터 제공만). 메신저·CRM 통합 허브 아님 (외부 SaaS API 흡수 금지). 모바일 native 앱 아님 v1 (순수 SSR 웹). 다국가 세무/통화 자동 변환 v1 미지원 (KRW 단일)"
   },
 
-  "hot": "task-002",
+  "hot": "M1-done",
 
   "constitution": {
     "1": "AI 전용. 인간 가독성을 위한 구조 타협 금지",
@@ -119,22 +119,29 @@
 
     "task-002": {
       "t": "task",
-      "v": "M1 미수금 자동 분류 + 요약 대시보드 (root /)",
+      "v": "M1 미수금 자동 분류 + 요약 대시보드 (root /) — fixture 기반 단위 검증",
       "spec": {
-        "aging_buckets": ["0-30일", "31-60일", "60일 초과"],
-        "summary_cards": ["이번 달 수입(paid 합계)", "총 미수금(sent 후 paid 없음)", "오늘 due", "이번 주 due"]
+        "aging_buckets": ["예정", "0-30일", "31-60일", "60일 초과"],
+        "summary_cards": ["이번 달 수입(paid 합계)", "총 미수금(unpaid balance 합)", "미수 송장 수", "오늘 due", "이번 주 due (7일 이내)"],
+        "fixture_kinds": "4종 (paid·partial·overdue·open) — task-001 압축으로 sent/draft/cancelled 부재. v1.1 후보",
+        "env_override": "SOLOFLOW_EVENTS_PATH 환경변수로 EVENTS-PATH override. 테스트 격리용"
       },
       "scope_in": [
-        "GET / 요약 페이지 SSR",
-        "aging projection 함수",
-        "summary projection 함수"
+        "GET / 요약 페이지 SSR — 5 cards",
+        "aging projection 함수 (예정/0-30/31-60/60일 초과)",
+        "due-this-week 함수 신설",
+        "tests/projection-test.fl — assert 기반 단위 검증"
       ],
-      "entry": ["src/render.fl", "src/state.fl"],
+      "entry": ["src/render.fl", "src/state.fl", "src/invoice.fl", "tests/projection-test.fl"],
       "check": [
-        "fixture invoice 5종 (paid·sent·overdue·draft·cancelled) → 요약 카드 4종 정확",
-        "aging bucket 경계값 (30/31/60/61일) 정확"
+        "fixture invoice 4종 (paid/partial/overdue/open) → 요약 카드 5종 정확",
+        "aging bucket 경계값 (0/30/31/60/61일) 정확",
+        "compute-status 5종 (paid/초과수금/partial/overdue/open) 정확",
+        "tests/projection-test.fl 26/26 PASS"
       ],
-      "verified": false,
+      "verified": true,
+      "verified_at": "2026-05-23",
+      "verified_evidence": "tests/projection-test.fl 26/26 PASS. live 서버 GET / 5 cards 렌더링 확인",
       "next": []
     },
 
@@ -271,6 +278,29 @@
         "v11 한계 발견 시 graveyard + FreeLang 백로그로 분리"
       ],
       "lock": false
+    },
+
+    "M1-done": {
+      "t": "task",
+      "v": "M1 invoice MVP 완료 — 다음 모듈(M2 contract) 착수 전 사용자 협의 대기",
+      "spec": {
+        "completed": ["task-003 (S0 init)", "task-001 (M1 MVP)", "task-004 (Gogs push)", "task-002 (projection 검증)"],
+        "next_module_candidates": ["M2 계약 (contract template + 만료 알림)", "M3 일정 (project timeline + daily focus)", "M4 집중 (Pomodoro + 습관)"]
+      },
+      "scope_in": ["사용자와 다음 모듈 선정 협의", "M2~M4 우선순위 재확인"],
+      "entry": ["SPEC.airc"],
+      "check": ["사용자 결정"],
+      "verified": false,
+      "next": []
+    },
+
+    "err-002": {
+      "t": "error",
+      "v": "fl-env-get 은 process.env 가 아닌 FL 내부 env 객체 조회. OS 환경변수 읽으려면 env-get (v11.5.1+) 사용",
+      "cause": "메모리 freelang_stdlib_functions 에 'fl-env-get \"KEY\" \"default\" — 환경변수' 라고 적혀있으나 실제로는 FL env 조회 함수. eval-builtins.ts:3525 case fl-env-get 은 FL env 트리 탐색",
+      "fix": "(env-get \"KEY\") 사용. v11.5.1+ 표준. env_get 은 deprecated alias",
+      "repeat_risk": "동일 함정 — 다른 fl-* 프리픽스 함수도 의미 확인 필요",
+      "date": "2026-05-23"
     },
 
     "err-001": {

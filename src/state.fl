@@ -2,7 +2,11 @@
 ; dec-002 LOCK: event sourcing. 직접 row update 금지. append 만.
 ; dec-007 LOCK: JSONL. data/invoice-events.jsonl 한 파일.
 
-(define EVENTS-PATH "data/invoice-events.jsonl")
+; EVENTS-PATH 는 SOLOFLOW_EVENTS_PATH 환경변수로 override 가능 (테스트 격리용)
+; 주의: fl-env-get 은 FL 내부 env 조회. OS 환경변수는 env-get (v11.5.1+)
+(define EVENTS-PATH
+  (let [override (env-get "SOLOFLOW_EVENTS_PATH")]
+    (if (or (nil? override) (str-blank? override)) "data/invoice-events.jsonl" override)))
 
 ; ── 이벤트 append (atomic file-append) ─────────────────────
 (defn append-event [type payload]
@@ -89,7 +93,7 @@
           (<= days 0)   "예정"
           (<= days 30)  "0-30일"
           (<= days 60)  "31-60일"
-          :else         "60일+")))))
+          :else         "60일 초과")))))
 
 ; ── 이번 달 수입: paid_at 기준 같은 YYYY-MM 인 payment 합계 ─
 (defn monthly-revenue [year-month]
@@ -108,6 +112,19 @@
       (fn [inv]
         (and (not (= (get inv "status") "paid"))
              (= (date-format (get inv "due_at") "yyyy-MM-dd") today-y-m-d)))
+      (list-invoices))))
+
+; ── 이번 주 due (지금부터 7일 이내, 만기 미경과·미완납만) ──
+(defn due-this-week []
+  (let [now (now-ms)
+        end (date-add now "days" 7)]
+    (filter
+      (fn [inv]
+        (and (not (= (get inv "status") "paid"))
+             (let [d (get inv "due_at")]
+               (and (not (nil? d))
+                    (>= d now)
+                    (<= d end)))))
       (list-invoices))))
 
 ; ── ID 생성: <ts>-<6 hex> (sortable) ───────────────────────

@@ -1,0 +1,162 @@
+; soloflow projection-test.fl — task-002 검증 (aging 경계값 + 4 fixture + 5 cards)
+; 실행: SOLOFLOW_EVENTS_PATH=tests/data/projection-test.jsonl node /root/kim/freelang-v11/bootstrap.js run tests/projection-test.fl
+
+(load "src/render.fl")
+(load "src/state.fl")
+
+(println "═══ soloflow task-002 projection tests ═══")
+(println "")
+
+; ── 카운터 (atom — v12 호환) ─────────────────────────────
+(define PASS-COUNT (atom 0))
+(define FAIL-COUNT (atom 0))
+
+(defn check [label actual expected]
+  (if (= actual expected)
+    (do (swap! PASS-COUNT + 1)
+        (println (str "  ✓ " label)))
+    (do (swap! FAIL-COUNT + 1)
+        (println (str "  ✗ " label))
+        (println (str "      expected: " expected))
+        (println (str "      actual:   " actual)))))
+
+; ── EVENTS-PATH 가 테스트 경로인지 확인 ────────────────────
+(println (str "EVENTS-PATH = " EVENTS-PATH))
+(if (not (= EVENTS-PATH "tests/data/projection-test.jsonl"))
+  (do (println "❌ SOLOFLOW_EVENTS_PATH 환경변수가 설정되지 않았습니다.")
+      (println "   실행: SOLOFLOW_EVENTS_PATH=tests/data/projection-test.jsonl ...")
+      (throw "env var missing"))
+  nil)
+(println "")
+
+; ── 기존 fixture 삭제 ──────────────────────────────────────
+(if (file-exists EVENTS-PATH) (file-delete EVENTS-PATH) nil)
+
+; ── 직접 이벤트 쓰기 헬퍼 (state.fl append-event 우회 — ts 고정 위해) ─
+(defn write-ev [ts type payload]
+  (file-append EVENTS-PATH
+    (str (json-stringify {"ts" ts "type" type "payload" payload}) "\n")))
+
+; ── 시간 기준 ──────────────────────────────────────────────
+(define NOW (now-ms))
+(define D1 86400000)        ; 1일 ms
+(define DAY-OFFSET (fn [n] (+ NOW (* D1 n))))
+(define THIS-MONTH (date-format NOW "yyyy-MM"))
+
+; ── 테스트 1 : aging-bucket 경계값 ─────────────────────────
+(println "[1] aging-bucket 경계값")
+(defn mk-inv-due [days-past]
+  {"id" "x" "client" "t" "amount_krw" 100 "paid_sum" 0 "balance" 100
+   "issued_at" 0 "due_at" (DAY-OFFSET (- 0 days-past)) "memo" "" "status" "overdue" "payments" []})
+
+(check "due +0일 (미래)"       (aging-bucket (mk-inv-due -0))   "예정")
+(check "due -1일 (1일 경과)"   (aging-bucket (mk-inv-due 1))    "0-30일")
+(check "due -30일 (경계)"      (aging-bucket (mk-inv-due 30))   "0-30일")
+(check "due -31일 (경계+1)"    (aging-bucket (mk-inv-due 31))   "31-60일")
+(check "due -60일 (경계)"      (aging-bucket (mk-inv-due 60))   "31-60일")
+(check "due -61일 (60일 초과)" (aging-bucket (mk-inv-due 61))   "60일 초과")
+(println "")
+
+; ── 테스트 2 : compute-status 4종 ──────────────────────────
+(println "[2] compute-status 4종 (paid/partial/overdue/open)")
+(check "amount=100 paid=100 → paid"
+       (compute-status 100 100 NOW) "paid")
+(check "amount=100 paid=120 → paid (초과수금)"
+       (compute-status 100 120 NOW) "paid")
+(check "amount=100 paid=30 → partial"
+       (compute-status 100 30 NOW) "partial")
+(check "amount=100 paid=0 due past → overdue"
+       (compute-status 100 0 (DAY-OFFSET -5)) "overdue")
+(check "amount=100 paid=0 due future → open"
+       (compute-status 100 0 (DAY-OFFSET 5)) "open")
+(println "")
+
+; ── 테스트 3 : Fixture 4종 + projection 통합 ───────────────
+(println "[3] Fixture 4종 (paid/partial/overdue/open) projection")
+
+; 3-1. paid 송장 — 이번 달 발행, 완납
+(write-ev (DAY-OFFSET -10) "invoice.created"
+  {"id" "inv-paid" "client" "A사" "amount_krw" 1000000
+   "issued_at" (DAY-OFFSET -10) "due_at" (DAY-OFFSET 20) "memo" "paid case"})
+(write-ev (DAY-OFFSET -2) "invoice.payment.received"
+  {"id" "inv-paid" "paid_amount_krw" 1000000
+   "paid_at" (DAY-OFFSET -2) "method" "bank"})
+
+; 3-2. partial 송장 — 이번 달 발행, 부분 입금
+(write-ev (DAY-OFFSET -8) "invoice.created"
+  {"id" "inv-partial" "client" "B사" "amount_krw" 500000
+   "issued_at" (DAY-OFFSET -8) "due_at" (DAY-OFFSET 22) "memo" "partial"})
+(write-ev (DAY-OFFSET -1) "invoice.payment.received"
+  {"id" "inv-partial" "paid_amount_krw" 200000
+   "paid_at" (DAY-OFFSET -1) "method" "bank"})
+
+; 3-3. overdue 송장 — 만기 지남, 미입금
+(write-ev (DAY-OFFSET -50) "invoice.created"
+  {"id" "inv-overdue" "client" "C사" "amount_krw" 300000
+   "issued_at" (DAY-OFFSET -50) "due_at" (DAY-OFFSET -10) "memo" "overdue"})
+
+; 3-4. open 송장 — 미래 만기, 미입금 (이번 주 due — 5일 후)
+(write-ev (DAY-OFFSET -3) "invoice.created"
+  {"id" "inv-open" "client" "D사" "amount_krw" 400000
+   "issued_at" (DAY-OFFSET -3) "due_at" (DAY-OFFSET 5) "memo" "open this week"})
+
+; projection 검증
+(define INV-PAID (project-invoice "inv-paid"))
+(define INV-PARTIAL (project-invoice "inv-partial"))
+(define INV-OVERDUE (project-invoice "inv-overdue"))
+(define INV-OPEN (project-invoice "inv-open"))
+
+(check "paid: status"          (get INV-PAID "status")    "paid")
+(check "paid: balance=0"       (get INV-PAID "balance")   0)
+(check "paid: paid_sum=1M"     (get INV-PAID "paid_sum")  1000000)
+
+(check "partial: status"       (get INV-PARTIAL "status") "partial")
+(check "partial: balance=300K" (get INV-PARTIAL "balance") 300000)
+
+(check "overdue: status"       (get INV-OVERDUE "status") "overdue")
+(check "overdue: balance=300K" (get INV-OVERDUE "balance") 300000)
+
+(check "open: status"          (get INV-OPEN "status")    "open")
+(check "open: balance=400K"    (get INV-OPEN "balance")   400000)
+(println "")
+
+; ── 테스트 4 : Summary 5 cards ─────────────────────────────
+(println "[4] Summary cards (5종)")
+
+; 이번 달 수입 = 같은 달 payment 합계
+;   paid: 이번 달 -2일 (1M)  / partial: -1일 (200K)  → 1,200,000
+;   단 -10일 의 created 는 이전 달일 수도 있으나 paid_at 기준이므로 이번 달
+(define EXPECTED-REVENUE
+  (+ (if (= (date-format (DAY-OFFSET -2) "yyyy-MM") THIS-MONTH) 1000000 0)
+     (if (= (date-format (DAY-OFFSET -1) "yyyy-MM") THIS-MONTH) 200000 0)))
+(check "이번 달 수입 = paid_at 기준 합"
+       (monthly-revenue THIS-MONTH) EXPECTED-REVENUE)
+
+; 총 미수금 = unpaid balance sum (partial 300K + overdue 300K + open 400K = 1,000,000)
+(define UNPAID (unpaid-invoices))
+(define UNPAID-BAL-SUM (sum (map (fn [inv] (get inv "balance")) UNPAID)))
+(check "총 미수금 = 1,000,000" UNPAID-BAL-SUM 1000000)
+
+; 미수 송장 수 = 3 (partial/overdue/open)
+(check "미수 송장 수 = 3" (length UNPAID) 3)
+
+; 오늘 due = 0 (fixture 어디에도 오늘이 due 인 송장 없음)
+(check "오늘 due = 0" (length (due-today)) 0)
+
+; 이번 주 due = 1 (inv-open, due = +5일)
+(check "이번 주 due = 1 (open만)" (length (due-this-week)) 1)
+(println "")
+
+; ── 테스트 5 : list-invoices 전체 개수 ─────────────────────
+(println "[5] list-invoices 전체")
+(check "전체 4건" (length (list-invoices)) 4)
+(println "")
+
+; ── 마무리 ──────────────────────────────────────────────────
+(println "═══════════════════════════════════════════")
+(println (str "결과: " @PASS-COUNT " PASS / " @FAIL-COUNT " FAIL"))
+(println "═══════════════════════════════════════════")
+
+(if (> @FAIL-COUNT 0)
+  (throw (str @FAIL-COUNT " test(s) failed"))
+  (println "✅ 모든 테스트 통과"))
