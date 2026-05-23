@@ -12,7 +12,7 @@
     "not": "팀 협업 도구 아님 (단일 사용자 single-tenant). 회계 정산 SaaS 아님 (세무사 대체 X — 보조 데이터 제공만). 메신저·CRM 통합 허브 아님 (외부 SaaS API 흡수 금지). 모바일 native 앱 아님 v1 (순수 SSR 웹). 다국가 세무/통화 자동 변환 v1 미지원 (KRW 단일)"
   },
 
-  "hot": "M2.1",
+  "hot": "M3",
 
   "constitution": {
     "1": "AI 전용. 인간 가독성을 위한 구조 타협 금지",
@@ -526,7 +526,9 @@
         "live: contract cancelled → reminder 안 생김",
         "live: expired contract → reminder 안 생김 (projection-only)"
       ],
-      "verified": false,
+      "verified": true,
+      "verified_at": "2026-05-23",
+      "verified_evidence": "cron-test.fl 23/23 PASS (days calc + threshold + duplicate collapse + cancelled skip). scan-expiring-contracts idempotent (2회 재실행 시 reminder 변화 없음). render-expiring-badges 3색 (1d/7d/14d). contract.cancelled 상태 제외됨.",
       "next": []
     },
 
