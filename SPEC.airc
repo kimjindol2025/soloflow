@@ -179,7 +179,9 @@
       "scope_in": ["토큰 갱신 (사용자 액션)", "Gogs 리포 생성", "remote add + push"],
       "entry": ["/root/kim/.env"],
       "check": ["git ls-remote origin master 결과 sha 존재"],
-      "verified": false,
+      "verified": true,
+      "verified_at": "2026-05-23",
+      "verified_evidence": "토큰 재인증 OK (LIST repos 560건 확인) → API repo 생성 → git push -u origin master 성공. remote URL 토큰 제거 (.git/config 평문 secret 금지)",
       "next": []
     },
 
