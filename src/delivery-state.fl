@@ -1,0 +1,138 @@
+; soloflow delivery-state.fl — v1.1-A delivery channel audit trail
+; delivery.* events =발송 기록 (audit trail). 실제 전송은 외부 webhook 또는 수동.
+; zero-dep 유지: file-append/read only, no email/SMS libs
+
+; ── DELIVERY-EVENTS-PATH override (테스트 격리) ────────────────
+(define DELIVERY-EVENTS-PATH
+  (let [override (env-get "SOLOFLOW_DELIVERY_EVENTS_PATH")]
+    (if (or (nil? override) (str-blank? override)) "data/delivery-events.jsonl" override)))
+
+; ── 이벤트 append ──────────────────────────────────────────────
+(defn append-delivery-event [type payload]
+  (let [ev {"ts" (now-ms) "type" type "payload" payload}
+        line (str (json-stringify ev) "\n")]
+    (file-append DELIVERY-EVENTS-PATH line)
+    ev))
+
+; ── 전체 이벤트 읽기 ───────────────────────────────────────────
+(defn read-delivery-events []
+  (if (not (file-exists DELIVERY-EVENTS-PATH))
+    []
+    (let [raw (file-read DELIVERY-EVENTS-PATH)
+          lines (str-lines raw)
+          non-empty (filter (fn [l] (not (str-blank? l))) lines)]
+      (map (fn [l] (json-parse l)) non-empty))))
+
+(defn delivery-events-of-type [type]
+  (filter (fn [e] (= (get e "type") type)) (read-delivery-events)))
+
+(defn delivery-events-for-id [delivery-id]
+  (filter
+    (fn [e] (= (get (get e "payload") "delivery_id") delivery-id))
+    (read-delivery-events)))
+
+; ── Delivery 상태 판정 ("pending" | "sent" | "failed") ─────────
+(defn delivery-status [delivery-id]
+  (let [evs (delivery-events-for-id delivery-id)
+        sent-list (filter (fn [e] (= (get e "type") "delivery.sent")) evs)
+        failed-list (filter (fn [e] (= (get e "type") "delivery.failed")) evs)]
+    (cond
+      (> (length sent-list) 0)  "sent"
+      (> (length failed-list) 0) "failed"
+      :else                      "pending")))
+
+; ── Delivery 상세 정보 ─────────────────────────────────────────
+(defn delivery-detail [delivery-id]
+  (let [all-evs (read-delivery-events)
+        requested (filter
+                    (fn [e]
+                      (and (= (get e "type") "delivery.requested")
+                           (= (get (get e "payload") "delivery_id") delivery-id)))
+                    all-evs)]
+    (if (= (length requested) 0)
+      nil
+      (let [req-payload (get (get requested 0) "payload")
+            status (delivery-status delivery-id)
+            attempt-count (delivery-attempt-count delivery-id)
+            evs-for-id (delivery-events-for-id delivery-id)
+            sent-ev (first (filter (fn [e] (= (get e "type") "delivery.sent")) evs-for-id))
+            failed-ev (first (filter (fn [e] (= (get e "type") "delivery.failed")) evs-for-id))]
+        {"delivery_id" delivery-id
+         "source_type" (get req-payload "source_type")
+         "source_id" (get req-payload "source_id")
+         "channel" (get req-payload "channel")
+         "recipient" (get req-payload "recipient")
+         "note" (get req-payload "note")
+         "requested_at" (get req-payload "requested_at")
+         "status" status
+         "sent_at" (if (nil? sent-ev) nil (get (get sent-ev "payload") "sent_at"))
+         "failed_at" (if (nil? failed-ev) nil (get (get failed-ev "payload") "failed_at"))
+         "failed_reason" (if (nil? failed-ev) nil (get (get failed-ev "payload") "reason"))
+         "attempt_count" attempt-count}))))
+
+; ── 특정 source(invoice/contract)에 연결된 deliveries ──────────
+(defn deliveries-for [source-type source-id]
+  (let [all-evs (read-delivery-events)
+        requested (filter
+                    (fn [e]
+                      (and (= (get e "type") "delivery.requested")
+                           (= (get (get e "payload") "source_type") source-type)
+                           (= (get (get e "payload") "source_id") source-id)))
+                    all-evs)
+        sorted (reverse requested)]  ; 최신 순
+    (map
+      (fn [req-ev]
+        (let [delivery-id (get (get req-ev "payload") "delivery_id")]
+          (delivery-detail delivery-id)))
+      sorted)))
+
+; ── 전체 delivery 리스트 ───────────────────────────────────────
+(defn all-deliveries []
+  (let [all-evs (read-delivery-events)
+        requested (filter (fn [e] (= (get e "type") "delivery.requested")) all-evs)
+        sorted (reverse requested)]  ; 최신 순
+    (map
+      (fn [req-ev]
+        (let [delivery-id (get (get req-ev "payload") "delivery_id")]
+          (delivery-detail delivery-id)))
+      sorted)))
+
+; ── Pending deliveries 만 ────────────────────────────────────────
+(defn pending-deliveries []
+  (filter
+    (fn [d]
+      (= (get d "status") "pending"))
+    (all-deliveries)))
+
+; ── Idempotent check: 동일 source + channel의 pending 존재 여부 ──
+(defn has-pending? [source-id channel]
+  (let [all-evs (read-delivery-events)
+        pending-reqs (filter
+                       (fn [e]
+                         (and (= (get e "type") "delivery.requested")
+                              (= (get (get e "payload") "source_id") source-id)
+                              (= (get (get e "payload") "channel") channel)))
+                       all-evs)
+        statuses (map
+                   (fn [req-ev]
+                     (delivery-status (get (get req-ev "payload") "delivery_id")))
+                   pending-reqs)
+        pending-count (length (filter (fn [s] (= s "pending")) statuses))]
+    (> pending-count 0)))
+
+; ── Retry 시도 횟수 (retried 이벤트 개수 + 1) ──────────────────
+(defn delivery-attempt-count [delivery-id]
+  (let [evs (delivery-events-for-id delivery-id)
+        retried (filter (fn [e] (= (get e "type") "delivery.retried")) evs)]
+    (+ (length retried) 1)))
+
+; ── 유효한 채널 검사 ───────────────────────────────────────────
+(defn valid-channel? [channel]
+  (or (= channel "email")
+      (= channel "sms")
+      (= channel "kakao")
+      (= channel "manual")))
+
+; ── ID 생성 ────────────────────────────────────────────────────
+(defn make-delivery-id []
+  (str "dlv-" (now-ms) "-" (str-slice (uuid) 0 6)))

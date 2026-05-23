@@ -12,7 +12,7 @@
     "not": "팀 협업 도구 아님 (단일 사용자 single-tenant). 회계 정산 SaaS 아님 (세무사 대체 X — 보조 데이터 제공만). 메신저·CRM 통합 허브 아님 (외부 SaaS API 흡수 금지). 모바일 native 앱 아님 v1 (순수 SSR 웹). 다국가 세무/통화 자동 변환 v1 미지원 (KRW 단일)"
   },
 
-  "hot": "M4",
+  "hot": "v1.1-A",
 
   "constitution": {
     "1": "AI 전용. 인간 가독성을 위한 구조 타협 금지",
@@ -42,10 +42,11 @@
     "M1_invoice": "견적·청구·입금 추적. hot task 첫 모듈",
     "M2_contract": "계약서 템플릿·만료 알림·스코프 체크리스트",
     "M3_schedule": "프로젝트 타임라인·마일스톤·daily focus",
-    "M4_focus":   "Pomodoro·집중 시간·습관 체크. 작업 모드 형태로 M1~M3 와 연동"
+    "M4_focus":   "Pomodoro·집중 시간·습관 체크. 작업 모드 형태로 M1~M3 와 연동",
+    "v1.1-A_delivery": "채널별 발송 audit trail (email/sms/kakao/manual). M1/M2와 연동"
   },
 
-  "priority": ["M1_invoice", "M2_contract", "M3_schedule", "M4_focus"],
+  "priority": ["M1_invoice", "M2_contract", "M3_schedule", "M4_focus", "v1.1-A_delivery"],
 
   "nodes": {
 
@@ -667,6 +668,68 @@
       "verified": true,
       "verified_at": "2026-05-23",
       "verified_evidence": "focus-test.fl 21/21 PASS (focus.started projection + active-session + pause/resume + completed/cancelled + habit create/check/uncheck/archive + streak calculation + multi-habit isolation). src/main.fl: 33 routes (22 existing + 11 focus). render.fl nav updated. E2E start confirmed (server listening).",
+      "next": ["task-010"]
+    },
+
+    "task-010": {
+      "t": "task",
+      "v": "v1.1-A delivery — 채널별 발송 audit trail (invoice·contract 연동)",
+      "spec": {
+        "domain_events": {
+          "delivery.requested": "{delivery_id, source_type, source_id, channel, recipient, note, requested_at}",
+          "delivery.sent": "{delivery_id, sent_at}",
+          "delivery.failed": "{delivery_id, failed_at, reason}",
+          "delivery.retried": "{delivery_id, retried_at, attempt_number}"
+        },
+        "storage": {
+          "underlying": "JSONL — data/delivery-events.jsonl (M1/M2/M3/M4와 별도)",
+          "channel": "email | sms | kakao | manual"
+        },
+        "state_projection": {
+          "delivery_status": "pending | sent | failed (이벤트 sequence 기반)",
+          "delivery_attempt_count": "retried + 1",
+          "pending_deliveries": "status=pending 필터",
+          "has_pending_idempotent": "동일 source+channel pending 중복 방지 (I3)"
+        },
+        "ssr_routes": {
+          "GET /delivery": "전체 발송 목록 (pending 강조 + 히스토리)",
+          "POST /delivery/request": "신규 발송 요청 (source_type 선택)",
+          "POST /delivery/:id/sent": "완료 수동 체크인",
+          "POST /delivery/:id/failed": "실패 기록",
+          "POST /delivery/:id/retry": "재시도 요청"
+        }
+      },
+      "scope_in": [
+        "src/delivery-state.fl: 4 domain events + projection (status/detail/deliveries-for/pending/has-pending/attempt-count)",
+        "src/delivery.fl: 5 routes + invariant (I1-I3)",
+        "src/render.fl: nav에 발송 메뉴 추가",
+        "src/main.fl: delivery 로드 + 5 routes (33→38개)",
+        "tests/delivery-test.fl: 26 검증 (pending/sent/failed/retry/attempt/has-pending)"
+      ],
+      "scope_out_v1.1": [
+        "실제 이메일·SMS 전송 (zero-dep 정책 유지 → webhook 구독 방식)",
+        "발송 예약·스케줄링",
+        "발송 채널 API 통합 (SendGrid/Twilio/Kakao Business)",
+        "발송 통계·분석 대시보드"
+      ],
+      "entry": [
+        "src/delivery-state.fl",
+        "src/delivery.fl",
+        "src/render.fl",
+        "src/main.fl",
+        "tests/delivery-test.fl"
+      ],
+      "check": [
+        "delivery-test.fl 26/26 PASS",
+        "live: GET /delivery 발송 목록 렌더링",
+        "live: POST /delivery/request 신규 요청",
+        "live: delivery.sent/failed/retried 상태 전환",
+        "live: has-pending? idempotent (I3)",
+        "invariant I1-I3 검증 (409/400)"
+      ],
+      "verified": true,
+      "verified_at": "2026-05-23",
+      "verified_evidence": "delivery-test.fl 26/26 PASS (events + status + pending/sent/failed/retry + attempt_count + has-pending idempotent + deliveries-for filter + detail). src/main.fl: 38 routes (33 existing + 5 delivery). render.fl nav updated. E2E app start confirmed.",
       "next": []
     },
 

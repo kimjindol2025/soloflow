@@ -1,0 +1,162 @@
+; soloflow delivery.fl — v1.1-A HTTP routes (channel audit trail)
+
+; ── GET /delivery : 발송 목록 ────────────────────────────────────
+(defn handle-delivery-list [req]
+  (let [pendings (pending-deliveries)
+        all (all-deliveries)
+        completed (filter (fn [d] (not (= (get d "status") "pending"))) all)
+        body (str
+          "<h1>발송 관리</h1>"
+          "<p><a href=\"/\">< 홈으로</a></p>"
+          "<h2>미완료(" (str (length pendings)) ")</h2>"
+          (if (= (length pendings) 0)
+            "<p class=\"muted\">대기 중인 발송이 없습니다.</p>"
+            (str
+              "<div class=\"card\">"
+              (reduce
+                (fn [acc d]
+                  (str acc
+                    "<div style=\"margin-bottom:10px;padding:8px;border:1px solid #ddd;border-radius:4px\">"
+                    "<p><strong>" (esc (get d "source_type")) " → " (esc (get d "channel")) "</strong>"
+                    " <small>" (get d "source_id") "</small></p>"
+                    "<p>" (esc (get d "recipient")) "</p>"
+                    "<p style=\"color:#666;font-size:0.9rem\">" (date-format (get d "requested_at") "yyyy-MM-dd HH:mm") "</p>"
+                    "<form method=\"POST\" style=\"display:inline\">"
+                      "<button formaction=\"/delivery/" (esc (get d "delivery_id")) "/sent\" type=\"submit\" style=\"background:#28a745\">완료</button>"
+                    "</form>"
+                    "<form method=\"POST\" style=\"display:inline\">"
+                      "<button formaction=\"/delivery/" (esc (get d "delivery_id")) "/failed\" type=\"submit\" style=\"background:#dc3545\">실패</button>"
+                    "</form>"
+                    "</div>"))
+                ""
+                pendings)
+              "</div>"))
+          "<h2>완료/실패</h2>"
+          (if (= (length completed) 0)
+            "<p class=\"muted\">발송 기록이 없습니다.</p>"
+            (str
+              "<table><thead><tr><th>상태</th><th>Source</th><th>채널</th><th>수신자</th><th>시각</th><th>시도</th></tr></thead><tbody>"
+              (reduce
+                (fn [acc d]
+                  (str acc
+                    "<tr>"
+                    "<td>" (if (= (get d "status") "sent") "✓ 완료" "✗ 실패") "</td>"
+                    "<td><small>" (esc (get d "source_type")) ":" (get d "source_id") "</small></td>"
+                    "<td>" (esc (get d "channel")) "</td>"
+                    "<td><small>" (esc (get d "recipient")) "</small></td>"
+                    "<td>" (if (= (get d "status") "sent")
+                              (date-format (get d "sent_at") "MM-dd HH:mm")
+                              (date-format (get d "failed_at") "MM-dd HH:mm"))
+                        "</td>"
+                    "<td>" (str (get d "attempt_count")) "</td>"
+                    "</tr>"))
+                ""
+                completed)
+              "</tbody></table>"))
+          "<h2>신규 발송 요청</h2>"
+          (render-delivery-request-form))]
+    (server-html (layout "발송" body))))
+
+; ── 발송 요청 폼 ──────────────────────────────────────────────────
+(defn render-delivery-request-form []
+  (str
+    "<div class=\"card\">"
+    "<form method=\"POST\" action=\"/delivery/request\">"
+      "<label>Source Type<select name=\"source_type\" required>"
+        "<option value=\"\">선택</option>"
+        "<option value=\"invoice\">Invoice</option>"
+        "<option value=\"contract\">Contract</option>"
+      "</select></label>"
+      "<label>Source ID<input name=\"source_id\" placeholder=\"송장 또는 계약 ID\" required></label>"
+      "<label>채널<select name=\"channel\" required>"
+        "<option value=\"\">선택</option>"
+        "<option value=\"email\">Email</option>"
+        "<option value=\"sms\">SMS</option>"
+        "<option value=\"kakao\">Kakao</option>"
+        "<option value=\"manual\">Manual</option>"
+      "</select></label>"
+      "<label>수신자<input name=\"recipient\" placeholder=\"이메일/전화번호/ID\" required></label>"
+      "<label>메모<textarea name=\"note\" rows=\"2\" placeholder=\"선택\"></textarea></label>"
+      "<button type=\"submit\">발송 요청</button>"
+    "</form>"
+    "</div>"))
+
+; ── POST /delivery/request : 발송 요청 이벤트 ─────────────────────
+(defn handle-delivery-request [req]
+  (let [body (get req "body")
+        source-type (form-field body "source_type")
+        source-id (form-field body "source_id")
+        channel (form-field body "channel")
+        recipient (form-field body "recipient")
+        note (form-field body "note")]
+    (cond
+      (or (str-blank? source-type) (str-blank? source-id) (str-blank? channel) (str-blank? recipient))
+      (server-status 400 "필수 필드 누락")
+
+      (not (valid-channel? channel))
+      (server-status 400 "지원하지 않는 채널입니다")
+
+      (has-pending? source-id channel)
+      (server-status 409 "해당 source+channel의 미완료 발송이 이미 있습니다")
+
+      :else
+      (let [delivery-id (make-delivery-id)
+            payload {"delivery_id" delivery-id
+                     "source_type" source-type
+                     "source_id" source-id
+                     "channel" channel
+                     "recipient" recipient
+                     "note" note
+                     "requested_at" (now-ms)}]
+        (append-delivery-event "delivery.requested" payload)
+        (server-redirect "/delivery")))))
+
+; ── POST /delivery/:id/sent : 완료 수동 체크인 ────────────────────
+(defn handle-delivery-sent [req]
+  (let [delivery-id (get (get req "params") "id")
+        detail (delivery-detail delivery-id)]
+    (cond
+      (nil? detail)
+      (server-status 404 "발송을 찾을 수 없습니다")
+
+      (= (get detail "status") "sent")
+      (server-status 409 "이미 완료된 발송입니다")
+
+      :else
+      (let [payload {"delivery_id" delivery-id "sent_at" (now-ms)}]
+        (append-delivery-event "delivery.sent" payload)
+        (server-redirect "/delivery")))))
+
+; ── POST /delivery/:id/failed : 실패 기록 ────────────────────────
+(defn handle-delivery-failed [req]
+  (let [delivery-id (get (get req "params") "id")
+        detail (delivery-detail delivery-id)
+        body (get req "body")
+        reason (form-field body "reason")]
+    (cond
+      (nil? detail)
+      (server-status 404 "발송을 찾을 수 없습니다")
+
+      (= (get detail "status") "sent")
+      (server-status 409 "이미 완료된 발송입니다")
+
+      :else
+      (let [payload {"delivery_id" delivery-id "failed_at" (now-ms) "reason" reason}]
+        (append-delivery-event "delivery.failed" payload)
+        (server-redirect "/delivery")))))
+
+; ── POST /delivery/:id/retry : 재시도 요청 ────────────────────────
+(defn handle-delivery-retry [req]
+  (let [delivery-id (get (get req "params") "id")
+        detail (delivery-detail delivery-id)]
+    (cond
+      (nil? detail)
+      (server-status 404 "발송을 찾을 수 없습니다")
+
+      (= (get detail "status") "sent")
+      (server-status 409 "완료된 발송은 재시도할 수 없습니다")
+
+      :else
+      (let [payload {"delivery_id" delivery-id "retried_at" (now-ms) "attempt" (get detail "attempt_count")}]
+        (append-delivery-event "delivery.retried" payload)
+        (server-redirect "/delivery")))))

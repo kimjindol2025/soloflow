@@ -1,0 +1,12 @@
+{"ts":1779510417987,"type":"delivery.requested","payload":{"delivery_id":"dlv-001","source_type":"invoice","source_id":"inv-123","channel":"email","recipient":"client@example.com","note":"","requested_at":1779510417987}}
+{"ts":1779510417987,"type":"delivery.sent","payload":{"delivery_id":"dlv-001","sent_at":1779510417987}}
+{"ts":1779510417987,"type":"delivery.requested","payload":{"delivery_id":"dlv-002","source_type":"contract","source_id":"ctr-456","channel":"sms","recipient":"+82-10-1234-5678","note":"","requested_at":1779510417987}}
+{"ts":1779510417987,"type":"delivery.failed","payload":{"delivery_id":"dlv-002","failed_at":1779510417987,"reason":"Invalid phone number"}}
+{"ts":1779510417987,"type":"delivery.retried","payload":{"delivery_id":"dlv-002","retried_at":1779510417987,"attempt":1}}
+{"ts":1779510417987,"type":"delivery.requested","payload":{"delivery_id":"dlv-003","source_type":"invoice","source_id":"inv-999","channel":"kakao","recipient":"user123","note":"","requested_at":1779510417987}}
+{"ts":1779510417987,"type":"delivery.sent","payload":{"delivery_id":"dlv-003","sent_at":1779510417987}}
+{"ts":1779510417987,"type":"delivery.requested","payload":{"delivery_id":"dlv-004","source_type":"invoice","source_id":"inv-111","channel":"email","recipient":"a@test.com","note":"","requested_at":1779510417987}}
+{"ts":1779510417987,"type":"delivery.requested","payload":{"delivery_id":"dlv-005","source_type":"invoice","source_id":"inv-111","channel":"sms","recipient":"+82-10-1111-1111","note":"","requested_at":1779510417987}}
+{"ts":1779510417987,"type":"delivery.requested","payload":{"delivery_id":"dlv-006","source_type":"contract","source_id":"ctr-789","channel":"manual","recipient":"note","note":"","requested_at":1779510417987}}
+{"ts":1779510417987,"type":"delivery.retried","payload":{"delivery_id":"dlv-006","retried_at":1779510417987,"attempt":1}}
+{"ts":1779510417987,"type":"delivery.retried","payload":{"delivery_id":"dlv-006","retried_at":1779510417987,"attempt":2}}

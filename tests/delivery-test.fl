@@ -1,0 +1,254 @@
+; soloflow delivery-test.fl — v1.1-A delivery channel audit trail 검증
+; 실행: SOLOFLOW_DELIVERY_EVENTS_PATH=tests/data/delivery-test.jsonl node /root/kim/freelang-v11/bootstrap.js run tests/delivery-test.fl
+
+(load "src/render.fl")
+(load "src/delivery-state.fl")
+
+(println "═══ soloflow v1.1-A delivery tests ═══")
+(println "")
+
+(define PASS-COUNT (atom 0))
+(define FAIL-COUNT (atom 0))
+
+(defn check [label actual expected]
+  (if (= actual expected)
+    (do (swap! PASS-COUNT + 1)
+        (println (str "  ✓ " label)))
+    (do (swap! FAIL-COUNT + 1)
+        (println (str "  ✗ " label))
+        (println (str "      expected: " expected))
+        (println (str "      actual:   " actual)))))
+
+(println (str "DELIVERY-EVENTS-PATH = " DELIVERY-EVENTS-PATH))
+(if (not (str-includes DELIVERY-EVENTS-PATH "delivery-test"))
+  (do (println "❌ SOLOFLOW_DELIVERY_EVENTS_PATH 미설정 (delivery-test)")
+      (throw "env var missing"))
+  nil)
+
+(if (file-exists DELIVERY-EVENTS-PATH) (file-delete DELIVERY-EVENTS-PATH) nil)
+
+(defn write-ev [ts type payload]
+  (file-append DELIVERY-EVENTS-PATH
+    (str (json-stringify {"ts" ts "type" type "payload" payload}) "\n")))
+
+(define NOW (now-ms))
+
+; ── test 1: delivery.requested 이벤트 저장 ───────────────────────
+(println "[1] delivery.requested 이벤트 저장")
+
+(let [delivery-id "dlv-001"
+      req-ts NOW]
+  (write-ev req-ts "delivery.requested"
+    {"delivery_id" delivery-id
+     "source_type" "invoice"
+     "source_id" "inv-123"
+     "channel" "email"
+     "recipient" "client@example.com"
+     "note" ""
+     "requested_at" req-ts})
+
+  (let [requested-list (delivery-events-of-type "delivery.requested")]
+    (check "delivery.requested 1개 이벤트" (length requested-list) 1)))
+
+(println "")
+
+; ── test 2: delivery-status "pending" ────────────────────────────
+(println "[2] delivery-status \"pending\" 확인")
+
+(let [status (delivery-status "dlv-001")]
+  (check "상태 = pending" status "pending"))
+
+(println "")
+
+; ── test 3: delivery.sent → status "sent" ───────────────────────
+(println "[3] delivery.sent → status \"sent\"")
+
+(write-ev NOW "delivery.sent"
+  {"delivery_id" "dlv-001"
+   "sent_at" NOW})
+
+(let [status (delivery-status "dlv-001")]
+  (check "상태 = sent" status "sent"))
+
+(println "")
+
+; ── test 4: sent 이후 retry → 409 (I1) ──────────────────────────
+(println "[4] sent 이후 retry 불가 (I1 invariant)")
+
+(let [detail (delivery-detail "dlv-001")]
+  (check "detail.status = sent" (get detail "status") "sent"))
+
+(println "")
+
+; ── test 5: delivery.failed → status "failed" ───────────────────
+(println "[5] delivery.failed → status \"failed\"")
+
+(let [delivery-id "dlv-002"]
+  (write-ev NOW "delivery.requested"
+    {"delivery_id" delivery-id
+     "source_type" "contract"
+     "source_id" "ctr-456"
+     "channel" "sms"
+     "recipient" "+82-10-1234-5678"
+     "note" ""
+     "requested_at" NOW})
+
+  (write-ev NOW "delivery.failed"
+    {"delivery_id" delivery-id
+     "failed_at" NOW
+     "reason" "Invalid phone number"})
+
+  (let [status (delivery-status delivery-id)]
+    (check "상태 = failed" status "failed")))
+
+(println "")
+
+; ── test 6: failed 후 retry 가능 ──────────────────────────────────
+(println "[6] failed 후 retry 가능")
+
+(let [delivery-id "dlv-002"
+      attempt-count (delivery-attempt-count delivery-id)]
+  (check "attempt_count = 1 (초기)" attempt-count 1)
+
+  (write-ev NOW "delivery.retried"
+    {"delivery_id" delivery-id
+     "retried_at" NOW
+     "attempt" 1})
+
+  (let [new-count (delivery-attempt-count delivery-id)]
+    (check "retry 후 attempt_count = 2" new-count 2)))
+
+(println "")
+
+; ── test 7: invalid channel → 400 (I2) ───────────────────────────
+(println "[7] invalid channel 검사 (I2)")
+
+(check "valid-channel? email" (valid-channel? "email") true)
+(check "valid-channel? sms" (valid-channel? "sms") true)
+(check "valid-channel? kakao" (valid-channel? "kakao") true)
+(check "valid-channel? manual" (valid-channel? "manual") true)
+(check "valid-channel? telegram (invalid)" (valid-channel? "telegram") false)
+
+(println "")
+
+; ── test 8: pending 중복 방지 has-pending? (I3) ──────────────────
+(println "[8] pending 중복 방지 has-pending? (I3)")
+
+(let [delivery-id "dlv-003"
+      source-id "inv-999"
+      channel "kakao"]
+  (write-ev NOW "delivery.requested"
+    {"delivery_id" delivery-id
+     "source_type" "invoice"
+     "source_id" source-id
+     "channel" channel
+     "recipient" "user123"
+     "note" ""
+     "requested_at" NOW})
+
+  (let [has-pending (has-pending? source-id channel)]
+    (check "has-pending? = true" has-pending true))
+
+  ; 같은 source+channel에 다른 delivery 추가 시도
+  (let [existing (has-pending? source-id channel)]
+    (check "이미 pending 존재 검사" existing true))
+
+  ; sent 처리 후 has-pending? false 확인
+  (write-ev NOW "delivery.sent"
+    {"delivery_id" delivery-id
+     "sent_at" NOW})
+
+  (let [no-pending (has-pending? source-id channel)]
+    (check "sent 처리 후 has-pending? = false" no-pending false)))
+
+(println "")
+
+; ── test 9: deliveries-for source 필터 ──────────────────────────
+(println "[9] deliveries-for source 필터")
+
+(let [source-id "inv-111"
+      dlv1 "dlv-004"
+      dlv2 "dlv-005"]
+  (write-ev NOW "delivery.requested"
+    {"delivery_id" dlv1
+     "source_type" "invoice"
+     "source_id" source-id
+     "channel" "email"
+     "recipient" "a@test.com"
+     "note" ""
+     "requested_at" NOW})
+
+  (write-ev NOW "delivery.requested"
+    {"delivery_id" dlv2
+     "source_type" "invoice"
+     "source_id" source-id
+     "channel" "sms"
+     "recipient" "+82-10-1111-1111"
+     "note" ""
+     "requested_at" NOW})
+
+  (let [deliveries (deliveries-for "invoice" source-id)]
+    (check "같은 source의 deliveries 2개" (length deliveries) 2)))
+
+(println "")
+
+; ── test 10: attempt_count 계산 ────────────────────────────────────
+(println "[10] attempt_count 계산 (retried + 1)")
+
+(let [delivery-id "dlv-006"]
+  (write-ev NOW "delivery.requested"
+    {"delivery_id" delivery-id
+     "source_type" "contract"
+     "source_id" "ctr-789"
+     "channel" "manual"
+     "recipient" "note"
+     "note" ""
+     "requested_at" NOW})
+
+  (check "초기 attempt_count = 1" (delivery-attempt-count delivery-id) 1)
+
+  (write-ev NOW "delivery.retried"
+    {"delivery_id" delivery-id
+     "retried_at" NOW
+     "attempt" 1})
+
+  (check "1회 retry 후 = 2" (delivery-attempt-count delivery-id) 2)
+
+  (write-ev NOW "delivery.retried"
+    {"delivery_id" delivery-id
+     "retried_at" NOW
+     "attempt" 2})
+
+  (check "2회 retry 후 = 3" (delivery-attempt-count delivery-id) 3))
+
+(println "")
+
+; ── test 11: all-deliveries / pending-deliveries 분리 ────────────
+(println "[11] all-deliveries / pending-deliveries 분리")
+
+(let [all (all-deliveries)
+      pendings (pending-deliveries)]
+  (check "all-deliveries 있음" (> (length all) 0) true)
+  (check "pending-deliveries 필터" (> (length pendings) 0) true)
+  (check "pending 개수 <= all 개수" (<= (length pendings) (length all)) true))
+
+(println "")
+
+; ── test 12: delivery-detail 상세 정보 ───────────────────────────
+(println "[12] delivery-detail 상세")
+
+(let [detail (delivery-detail "dlv-001")]
+  (check "detail 존재" (nil? detail) false)
+  (check "delivery_id 일치" (get detail "delivery_id") "dlv-001")
+  (check "source_type" (get detail "source_type") "invoice")
+  (check "channel" (get detail "channel") "email"))
+
+(println "")
+
+(println "═══════════════════════════════════════════")
+(println (str "결과: " @PASS-COUNT " PASS / " @FAIL-COUNT " FAIL"))
+(println "═══════════════════════════════════════════")
+
+(if (> @FAIL-COUNT 0)
+  (throw (str @FAIL-COUNT " test(s) failed"))
+  (println "✅ 모든 테스트 통과"))

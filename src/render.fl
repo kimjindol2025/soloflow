@@ -82,6 +82,7 @@
   <a href=\"/invoices\">송장</a>
   <a href=\"/contracts\">계약</a>
   <a href=\"/focus\">집중</a>
+  <a href=\"/delivery\">발송</a>
   <a href=\"/invoices/new\">+ 송장</a>
   <a href=\"/contracts/new\">+ 계약</a>
   <a href=\"/habit/list\">+ 습관</a>

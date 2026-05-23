@@ -12,8 +12,10 @@
 (load "src/schedule.fl")
 (load "src/focus-state.fl")
 (load "src/focus.fl")
+(load "src/delivery-state.fl")
+(load "src/delivery.fl")
 
-; ── 라우트 등록 (33개: invoice 8 + contract 6 + schedule 8 + focus 11) ──
+; ── 라우트 등록 (38개: invoice 8 + contract 6 + schedule 8 + focus 11 + delivery 5) ──
 ; invoice 8 (M1.1: send/cancel 추가)
 (server-get  "/"                    "handle-index")
 (server-get  "/invoices"            "handle-invoices")
@@ -51,6 +53,12 @@
 (server-post "/focus/habit/:id/check"      "handle-habit-check")
 (server-post "/focus/habit/:id/uncheck"    "handle-habit-uncheck")
 (server-post "/habit/:id/archive"          "handle-habit-archive")
+; delivery 5 (v1.1-A: channel audit trail)
+(server-get  "/delivery"                   "handle-delivery-list")
+(server-post "/delivery/request"           "handle-delivery-request")
+(server-post "/delivery/:id/sent"          "handle-delivery-sent")
+(server-post "/delivery/:id/failed"        "handle-delivery-failed")
+(server-post "/delivery/:id/retry"         "handle-delivery-retry")
 
 (println "soloflow listening on http://localhost:41955")
 (server-start 41955)
