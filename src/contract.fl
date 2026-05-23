@@ -90,9 +90,23 @@
 (defn handle-contract-new-form [req]
   (let [today (date-format (now-ms) "yyyy-MM-dd")
         plus180 (date-format (date-add (now-ms) "days" 180) "yyyy-MM-dd")
+        templates (active-templates)
+        selected (selected-template)
+        template-options (reduce
+                           (fn [acc t]
+                             (let [pid (get (get t "payload") "template_id")
+                                   title (get (get t "payload") "title")
+                                   selected-attr (if (and (not (nil? selected)) (= pid (get selected "template_id"))) " selected" "")]
+                               (str acc "<option value=\"" (esc pid) "\"" selected-attr ">" (esc title) "</option>")))
+                           ""
+                           templates)
         body (str
           "<h1>새 계약</h1>"
           "<form method=\"POST\" action=\"/contracts\">"
+            "<label>템플릿<select name=\"template_id\">"
+              "<option value=\"\">기본 선택</option>"
+              template-options
+            "</select></label>"
             "<label>계약명<input name=\"title\" required placeholder=\"예: 웹사이트 리뉴얼 용역계약\"></label>"
             "<label>갑 (발주자)<input name=\"party_a\" required></label>"
             "<label>을 (수행자)<input name=\"party_b\" required></label>"
@@ -122,7 +136,8 @@
         vat-raw (form-field body "vat_included")
         vat (not (str-blank? vat-raw))
         terms (form-field body "payment_terms")
-        memo (form-field body "memo")]
+        memo (form-field body "memo")
+        template-id (form-field body "template_id")]
     (if (or (str-blank? title) (str-blank? party_a) (str-blank? party_b)
             (str-blank? ps) (str-blank? pe))
       (server-status 400 "필수 필드 누락")
@@ -137,7 +152,8 @@
                      "amount_krw" amount
                      "vat_included" vat
                      "payment_terms" terms
-                     "memo" memo}]
+                     "memo" memo
+                     "template_id" (if (str-blank? template-id) nil template-id)}]
         (append-contract-event "contract.created" payload)
         (server-redirect (str "/contracts/" id))))))
 
@@ -226,7 +242,7 @@
 
 (defn render-print-page [c]
   (let [sig (get c "signature")
-        contract-text (render-contract-text c)
+        contract-text (select-contract-template (get c "template_id") c)
         sig-block (if (nil? sig)
                     "\n[ 서명 미완료 ]"
                     (str "\n\n갑: ____________________  (인)\n\n을: " (get sig "signer_name") "  (" (get sig "signer_role") ")  서명일: " (fmt-date (get sig "signed_at")) "  (인)"))]

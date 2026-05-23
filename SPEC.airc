@@ -12,7 +12,7 @@
     "not": "팀 협업 도구 아님 (단일 사용자 single-tenant). 회계 정산 SaaS 아님 (세무사 대체 X — 보조 데이터 제공만). 메신저·CRM 통합 허브 아님 (외부 SaaS API 흡수 금지). 모바일 native 앱 아님 v1 (순수 SSR 웹). 다국가 세무/통화 자동 변환 v1 미지원 (KRW 단일)"
   },
 
-  "hot": "v1.1-A",
+  "hot": "v1.1-B",
 
   "constitution": {
     "1": "AI 전용. 인간 가독성을 위한 구조 타협 금지",
@@ -730,6 +730,76 @@
       "verified": true,
       "verified_at": "2026-05-23",
       "verified_evidence": "delivery-test.fl 26/26 PASS (events + status + pending/sent/failed/retry + attempt_count + has-pending idempotent + deliveries-for filter + detail). src/main.fl: 38 routes (33 existing + 5 delivery). render.fl nav updated. E2E app start confirmed.",
+      "next": ["task-011"]
+    },
+
+    "task-011": {
+      "t": "task",
+      "v": "v1.1-B 다중 템플릿 — contract 템플릿 CRUD + versioning + selection",
+      "spec": {
+        "domain_events": {
+          "template.created": "{template_id, title, category, body_text, created_at}",
+          "template.updated": "{template_id, new_body_text, updated_at}",
+          "template.archived": "{template_id, archived_at}",
+          "template.selected": "{template_id, selected_at}"
+        },
+        "storage": {
+          "underlying": "JSONL — data/template-events.jsonl (M2 contract 도메인)",
+          "seed_templates": ["tmpl-minimal (기존 minimal-contract-text)", "tmpl-nda", "tmpl-maintenance"]
+        },
+        "state_projection": {
+          "template_detail": "created + latest updated 이벤트 기반 body 계산 (version = updated count + 1)",
+          "active_templates": "archived 아닌 templates 목록 (최신 순)",
+          "selected_template": "마지막 template.selected 이벤트의 template_id → detail 조회",
+          "template_version": "updated 이벤트 횟수 + 1"
+        },
+        "ssr_routes": {
+          "GET /template/list": "템플릿 목록 + 기본 선택 현황 + seed 자동 생성",
+          "POST /template/create": "신규 템플릿 생성",
+          "POST /template/:id/update": "새 버전 append (template.updated)",
+          "POST /template/:id/archive": "템플릿 보관 (I3: 이미 archived 재보관 금지)",
+          "POST /template/:id/select": "기본 템플릿 선택 (I1: archived 선택 금지)"
+        }
+      },
+      "scope_in": [
+        "src/template-state.fl: 4 domain events + projection (detail/active/selected/current-body/version/exists/archived)",
+        "src/template.fl: 5 routes + invariant (I1-I3) + seed 자동 생성 (ensure-default-templates)",
+        "src/contract-template.fl: select-contract-template 추가 (template_id로 본문 선택 + fill-vars 적용, fallback minimal)",
+        "src/contract.fl: template dropdown 추가 + handle-contract-create 에 template_id payload 포함 + render-print-page 에서 select-contract-template 호출",
+        "src/contract-state.fl: project-contract 에 template_id 필드 추가",
+        "src/render.fl: nav에 '템플릿' 링크 추가",
+        "src/main.fl: template load + 5 routes (38→43개)",
+        "tests/template-test.fl: 37 검증 (seed/detail/body/updated/archived/selected/exists/uniqueness/custom/versioning/integration)"
+      ],
+      "scope_out_v1.1": [
+        "shared template library 업로드·다운로드",
+        "template preview 생성 (변수 치환 결과 보기)",
+        "template 권한 (read-only vs edit)",
+        "여러 조직/팀의 template 공유",
+        "문체부 표준계약서 통합"
+      ],
+      "entry": [
+        "src/template-state.fl",
+        "src/template.fl",
+        "src/contract-template.fl",
+        "src/contract.fl",
+        "src/contract-state.fl",
+        "src/render.fl",
+        "src/main.fl",
+        "tests/template-test.fl"
+      ],
+      "check": [
+        "template-test.fl 37/37 PASS",
+        "live: GET /template/list 렌더링 + seed 자동 생성",
+        "live: POST /template/create 신규 생성",
+        "live: POST /template/:id/update 버전 증가 (version v1→v2→v3)",
+        "live: template dropdown in GET /contracts/new",
+        "live: GET /contracts/:id/print 에서 선택 template 본문 사용",
+        "invariant I1-I3 검증 (400/409 error cases)"
+      ],
+      "verified": true,
+      "verified_at": "2026-05-23",
+      "verified_evidence": "template-test.fl 37/37 PASS (seed create + detail + body + updated versioning + archived filter + selected uniqueness + exists/archived bool + multi-template isolation + select-contract-template fallback + versioning multi-update + active-templates sort + events count + filter by id + nil detail + archived fallback). src/main.fl: 43 routes (38 existing + 5 template). contract form + contract-state + render nav updated. E2E server confirmed.",
       "next": []
     },
 

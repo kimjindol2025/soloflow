@@ -1,0 +1,153 @@
+; soloflow template-state.fl — v1.1-B contract template CRUD + version control
+; template.* events = 계약서 템플릿 이력 관리 (다중 템플릿 지원)
+; seed: 기본 3종 (minimal, nda, maintenance) 자동 생성
+
+; ── TEMPLATE-EVENTS-PATH override (테스트 격리) ─────────────────
+(define TEMPLATE-EVENTS-PATH
+  (let [override (env-get "SOLOFLOW_TEMPLATE_EVENTS_PATH")]
+    (if (or (nil? override) (str-blank? override)) "data/template-events.jsonl" override)))
+
+; ── 이벤트 append ──────────────────────────────────────────────
+(defn append-template-event [type payload]
+  (let [ev {"ts" (now-ms) "type" type "payload" payload}
+        line (str (json-stringify ev) "\n")]
+    (file-append TEMPLATE-EVENTS-PATH line)
+    ev))
+
+; ── 전체 이벤트 읽기 ───────────────────────────────────────────
+(defn read-template-events []
+  (if (not (file-exists TEMPLATE-EVENTS-PATH))
+    []
+    (let [raw (file-read TEMPLATE-EVENTS-PATH)
+          lines (str-lines raw)
+          non-empty (filter (fn [l] (not (str-blank? l))) lines)]
+      (map (fn [l] (json-parse l)) non-empty))))
+
+(defn template-events-of-type [type]
+  (filter (fn [e] (= (get e "type") type)) (read-template-events)))
+
+(defn template-events-for-id [template-id]
+  (filter
+    (fn [e] (= (get (get e "payload") "template_id") template-id))
+    (read-template-events)))
+
+; ── 템플릿 상세 정보 ───────────────────────────────────────────
+(defn template-detail [template-id]
+  (let [all-evs (read-template-events)
+        created-list (filter
+                       (fn [e]
+                         (and (= (get e "type") "template.created")
+                              (= (get (get e "payload") "template_id") template-id)))
+                       all-evs)]
+    (if (= (length created-list) 0)
+      nil
+      (let [created-ev (get created-list 0)
+            created-payload (get created-ev "payload")
+            updated-list (filter
+                           (fn [e]
+                             (and (= (get e "type") "template.updated")
+                                  (= (get (get e "payload") "template_id") template-id)))
+                           all-evs)
+            archived-list (filter
+                            (fn [e]
+                              (and (= (get e "type") "template.archived")
+                                   (= (get (get e "payload") "template_id") template-id)))
+                            all-evs)
+            current-body (if (> (length updated-list) 0)
+                           (get (get (last updated-list) "payload") "new_body_text")
+                           (get created-payload "body_text"))
+            version (+ (length updated-list) 1)
+            archived (> (length archived-list) 0)]
+        {"template_id" template-id
+         "title" (get created-payload "title")
+         "category" (get created-payload "category")
+         "body_text" current-body
+         "version" version
+         "created_at" (get created-ev "ts")
+         "archived" archived}))))
+
+; ── 활성 템플릿 목록 (archived 제외) ────────────────────────────
+(defn active-templates []
+  (let [all-evs (read-template-events)
+        created (filter (fn [e] (= (get e "type") "template.created")) all-evs)
+        sorted (reverse created)]  ; 최신 순
+    (filter
+      (fn [created-ev]
+        (let [template-id (get (get created-ev "payload") "template_id")]
+          (not (template-archived? template-id))))
+      sorted)))
+
+; ── 템플릿 최신 본문 ───────────────────────────────────────────
+(defn template-current-body [template-id]
+  (let [detail (template-detail template-id)]
+    (if (nil? detail)
+      nil
+      (get detail "body_text"))))
+
+; ── 템플릿 버전 (updated 횟수 + 1) ────────────────────────────
+(defn template-version [template-id]
+  (let [detail (template-detail template-id)]
+    (if (nil? detail)
+      nil
+      (get detail "version"))))
+
+; ── 존재 여부 검사 ────────────────────────────────────────────
+(defn template-exists? [template-id]
+  (not (nil? (template-detail template-id))))
+
+; ── Archived 상태 검사 ────────────────────────────────────────
+(defn template-archived? [template-id]
+  (let [detail (template-detail template-id)]
+    (if (nil? detail)
+      false
+      (get detail "archived"))))
+
+; ── 선택된 기본 템플릿 ────────────────────────────────────────
+(defn selected-template []
+  (let [all-evs (read-template-events)
+        selected-list (filter (fn [e] (= (get e "type") "template.selected")) all-evs)
+        sorted (reverse selected-list)]  ; 최신 순
+    (if (= (length sorted) 0)
+      nil
+      (let [latest (get sorted 0)
+            template-id (get (get latest "payload") "template_id")]
+        (template-detail template-id)))))
+
+; ── ID 생성 ────────────────────────────────────────────────────
+(defn make-template-id []
+  (str "tmpl-" (str-slice (uuid) 0 6)))
+
+; ── 기본 템플릿 Seed (앱 시작 또는 첫 조회 시 자동 생성) ────────
+(defn ensure-default-templates []
+  (let [existing (active-templates)]
+    (if (> (length existing) 0)
+      nil
+      (do
+        ; minimal 템플릿 (기존 contract-template.fl의 minimal-contract-text)
+        (append-template-event "template.created"
+          {"template_id" "tmpl-minimal"
+           "title" "용역계약서 (Minimal)"
+           "category" "contract.minimal"
+           "body_text" "계약서\n\n당사자: {{party_a}} (갑) ↔ {{party_b}} (을)\n\n제목: {{title}}\n\n범위: {{scope}}\n\n기간: {{period_start}} ~ {{period_end}}\n\n대금: {{amount_text}} (부가세 {{vat_text}})\n\n지급: {{payment_terms}}\n\n기타: {{memo}}\n\n작성: {{created_date}}\n\n[서명 공간]\n갑: ________________\n을: ________________"
+           "created_at" (now-ms)})
+
+        ; NDA 템플릿
+        (append-template-event "template.created"
+          {"template_id" "tmpl-nda"
+           "title" "비밀유지계약서 (NDA)"
+           "category" "contract.nda"
+           "body_text" "비밀유지계약서\n\n당사자: {{party_a}} (갑) ↔ {{party_b}} (을)\n\n제목: {{title}}\n\n범위: {{scope}}\n\n기간: {{period_start}} ~ {{period_end}}\n\n1. 비밀정보: 위 범위 내 모든 정보\n2. 용도제한: 사전 동의 없이 제3자 공개 금지\n3. 반환의무: 계약 종료 시 모든 자료 반환\n4. 법적책임: 위반 시 {{amount_text}} 손배배상\n\n기타: {{memo}}\n\n작성: {{created_date}}\n\n[서명 공간]\n갑: ________________\n을: ________________"
+           "created_at" (now-ms)})
+
+        ; 유지보수 계약 템플릿
+        (append-template-event "template.created"
+          {"template_id" "tmpl-maintenance"
+           "title" "유지보수계약서"
+           "category" "contract.maintenance"
+           "body_text" "유지보수계약서\n\n당사자: {{party_a}} (갑) ↔ {{party_b}} (을)\n\n제목: {{title}}\n\n범위: {{scope}}\n\n기간: {{period_start}} ~ {{period_end}}\n\n유지보수 내용:\n- {{maintenance_scope}}\n- 응답시간: {{response_hours}}\n- 월정액: {{monthly_fee}}\n\n기타: {{memo}}\n\n작성: {{created_date}}\n\n[서명 공간]\n갑: ________________\n을: ________________"
+           "created_at" (now-ms)})
+
+        ; minimal을 기본 선택으로 설정
+        (append-template-event "template.selected"
+          {"template_id" "tmpl-minimal"
+           "selected_at" (now-ms)})))))

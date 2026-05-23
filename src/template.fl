@@ -1,0 +1,143 @@
+; soloflow template.fl — v1.1-B HTTP routes (template CRUD)
+
+; ── GET /template/list : 템플릿 목록 + 기본 선택 현황 ──────────────
+(defn handle-template-list [req]
+  (ensure-default-templates)  ; seed 자동 생성
+  (let [templates (active-templates)
+        selected (selected-template)
+        selected-id (if (nil? selected) "none" (get selected "template_id"))
+        body (str
+          "<h1>계약서 템플릿</h1>"
+          "<p><a href=\"/contracts\">< 계약서로</a></p>"
+          "<div class=\"card\">"
+            "<h2>기본 템플릿</h2>"
+            (if (nil? selected)
+              "<p class=\"muted\">선택된 기본 템플릿이 없습니다.</p>"
+              (str
+                "<p><strong>" (esc (get selected "title")) "</strong> "
+                "<small>v" (str (get selected "version")) "</small></p>"))
+          "</div>"
+          "<h2>템플릿 목록 (" (str (length templates)) ")</h2>"
+          (if (= (length templates) 0)
+            "<p class=\"muted\">템플릿이 없습니다.</p>"
+            (str
+              "<table><thead><tr><th>제목</th><th>카테고리</th><th>버전</th><th>액션</th></tr></thead><tbody>"
+              (reduce
+                (fn [acc tmpl-ev]
+                  (let [tmpl-id (get (get tmpl-ev "payload") "template_id")
+                        detail (template-detail tmpl-id)]
+                    (if (nil? detail)
+                      acc
+                      (str acc
+                        "<tr>"
+                        "<td>" (esc (get detail "title")) "</td>"
+                        "<td>" (esc (get detail "category")) "</td>"
+                        "<td>v" (str (get detail "version")) "</td>"
+                        "<td>"
+                          (if (= tmpl-id selected-id)
+                            "<span style=\"color:#28a745\">✓ 기본</span> "
+                            (str "<form method=\"POST\" action=\"/template/" (esc tmpl-id) "/select\" style=\"display:inline\">"
+                              "<button type=\"submit\">선택</button>"
+                            "</form> "))
+                          "<form method=\"POST\" action=\"/template/" (esc tmpl-id) "/archive\" style=\"display:inline\">"
+                            "<button type=\"submit\" style=\"background:#999\">보관</button>"
+                          "</form>"
+                        "</td>"
+                        "</tr>"))))
+                ""
+                templates)
+              "</tbody></table>"))
+          (render-template-create-form))]
+    (server-html (layout "템플릿" body))))
+
+; ── 템플릿 생성 폼 ──────────────────────────────────────────────
+(defn render-template-create-form []
+  (str
+    "<h2>신규 템플릿</h2>"
+    "<div class=\"card\">"
+    "<form method=\"POST\" action=\"/template/create\">"
+      "<label>제목<input name=\"title\" placeholder=\"예: 개발용역계약서\" required></label>"
+      "<label>카테고리<select name=\"category\" required>"
+        "<option value=\"\">선택</option>"
+        "<option value=\"contract.minimal\">Minimal</option>"
+        "<option value=\"contract.nda\">NDA</option>"
+        "<option value=\"contract.maintenance\">Maintenance</option>"
+      "</select></label>"
+      "<label>템플릿 본문<textarea name=\"body_text\" rows=\"10\" placeholder=\"{{party_a}} / {{party_b}} / {{title}} 등 변수 사용\" required></textarea></label>"
+      "<button type=\"submit\">생성</button>"
+    "</form>"
+    "</div>"))
+
+; ── POST /template/create : 템플릿 생성 ────────────────────────
+(defn handle-template-create [req]
+  (let [body (get req "body")
+        title (form-field body "title")
+        category (form-field body "category")
+        body-text (form-field body "body_text")]
+    (cond
+      (or (str-blank? title) (str-blank? category) (str-blank? body-text))
+      (server-status 400 "필수 필드 누락")
+
+      :else
+      (let [template-id (make-template-id)
+            payload {"template_id" template-id
+                     "title" title
+                     "category" category
+                     "body_text" body-text
+                     "created_at" (now-ms)}]
+        (append-template-event "template.created" payload)
+        (server-redirect "/template/list")))))
+
+; ── POST /template/:id/update : 템플릿 업데이트 (새 버전) ────────
+(defn handle-template-update [req]
+  (let [template-id (get (get req "params") "id")
+        detail (template-detail template-id)]
+    (cond
+      (nil? detail)
+      (server-status 404 "템플릿을 찾을 수 없습니다")
+
+      (template-archived? template-id)
+      (server-status 400 "보관된 템플릿은 수정할 수 없습니다")
+
+      :else
+      (let [body (get req "body")
+            new-body (form-field body "body_text")]
+        (if (str-blank? new-body)
+          (server-status 400 "템플릿 본문은 필수입니다")
+          (let [payload {"template_id" template-id
+                         "new_body_text" new-body
+                         "updated_at" (now-ms)}]
+            (append-template-event "template.updated" payload)
+            (server-redirect "/template/list")))))))
+
+; ── POST /template/:id/archive : 템플릿 보관 ───────────────────
+(defn handle-template-archive [req]
+  (let [template-id (get (get req "params") "id")
+        detail (template-detail template-id)]
+    (cond
+      (nil? detail)
+      (server-status 404 "템플릿을 찾을 수 없습니다")
+
+      (template-archived? template-id)
+      (server-status 409 "이미 보관된 템플릿입니다")
+
+      :else
+      (let [payload {"template_id" template-id "archived_at" (now-ms)}]
+        (append-template-event "template.archived" payload)
+        (server-redirect "/template/list")))))
+
+; ── POST /template/:id/select : 기본 템플릿 선택 ─────────────────
+(defn handle-template-select [req]
+  (let [template-id (get (get req "params") "id")
+        detail (template-detail template-id)]
+    (cond
+      (nil? detail)
+      (server-status 404 "템플릿을 찾을 수 없습니다")
+
+      (template-archived? template-id)
+      (server-status 400 "보관된 템플릿은 선택할 수 없습니다")
+
+      :else
+      (let [payload {"template_id" template-id "selected_at" (now-ms)}]
+        (append-template-event "template.selected" payload)
+        (server-redirect "/template/list")))))

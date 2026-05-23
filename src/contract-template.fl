@@ -66,3 +66,31 @@
               ["memo"          memo-text]
               ["created_date"  (fmt-date (if (nil? created) (now-ms) created))]]]
     (fill-vars (minimal-contract-text) vars)))
+
+; ── template 선택 + 렌더 (nil 또는 없는 ID면 minimal fallback) ───
+(defn select-contract-template [template-id contract]
+  (let [body (if (or (nil? template-id) (not (template-exists? template-id)))
+               (minimal-contract-text)
+               (template-current-body template-id))
+        amt (get contract "amount_krw")
+        amt-str (group-thousands (str amt) (length (str amt)))
+        vat-text (if (get contract "vat_included") "포함" "별도로 가산")
+        memo-raw (get contract "memo")
+        memo-text (if (or (nil? memo-raw) (str-blank? (str memo-raw))) "(해당 사항 없음)" memo-raw)
+        scope-raw (get contract "scope")
+        scope-text (if (or (nil? scope-raw) (str-blank? (str scope-raw))) "(상세 협의)" scope-raw)
+        payment-raw (get contract "payment_terms")
+        payment-text (if (or (nil? payment-raw) (str-blank? (str payment-raw))) "(별도 협의)" payment-raw)
+        created (get contract "created_at")
+        vars [["party_a"       (get contract "party_a")]
+              ["party_b"       (get contract "party_b")]
+              ["title"         (get contract "title")]
+              ["scope"         scope-text]
+              ["period_start"  (fmt-date (get contract "period_start"))]
+              ["period_end"    (fmt-date (get contract "period_end"))]
+              ["amount_text"   amt-str]
+              ["vat_text"      vat-text]
+              ["payment_terms" payment-text]
+              ["memo"          memo-text]
+              ["created_date"  (fmt-date (if (nil? created) (now-ms) created))]]]
+    (fill-vars body vars)))

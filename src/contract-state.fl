@@ -80,6 +80,7 @@
          "vat_included"  (get c "vat_included")
          "payment_terms" (get c "payment_terms")
          "memo"          (get c "memo")
+         "template_id"   (get c "template_id")
          "created_at"    created-ts
          "status"        status
          "signature"     signature

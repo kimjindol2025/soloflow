@@ -1,0 +1,244 @@
+; soloflow template-test.fl — v1.1-B multi-template CRUD 검증
+; 실행: SOLOFLOW_TEMPLATE_EVENTS_PATH=tests/data/template-test.jsonl node /root/kim/freelang-v11/bootstrap.js run tests/template-test.fl
+
+(load "src/render.fl")
+(load "src/contract-template.fl")
+(load "src/template-state.fl")
+
+(println "═══ soloflow v1.1-B template tests ═══")
+(println "")
+
+(define PASS-COUNT (atom 0))
+(define FAIL-COUNT (atom 0))
+
+(defn check [label actual expected]
+  (if (= actual expected)
+    (do (swap! PASS-COUNT + 1)
+        (println (str "  ✓ " label)))
+    (do (swap! FAIL-COUNT + 1)
+        (println (str "  ✗ " label))
+        (println (str "      expected: " expected))
+        (println (str "      actual:   " actual)))))
+
+(println (str "TEMPLATE-EVENTS-PATH = " TEMPLATE-EVENTS-PATH))
+(if (not (str-includes TEMPLATE-EVENTS-PATH "template-test"))
+  (do (println "❌ SOLOFLOW_TEMPLATE_EVENTS_PATH 미설정 (template-test)")
+      (throw "env var missing"))
+  nil)
+
+(if (file-exists TEMPLATE-EVENTS-PATH) (file-delete TEMPLATE-EVENTS-PATH) nil)
+
+(defn write-ev [ts type payload]
+  (file-append TEMPLATE-EVENTS-PATH
+    (str (json-stringify {"ts" ts "type" type "payload" payload}) "\n")))
+
+(define NOW (now-ms))
+
+; ── test 1: ensure-default-templates 자동 생성 ─────────────
+(println "[1] ensure-default-templates 자동 생성")
+(ensure-default-templates)
+(let [actives (active-templates)]
+  (check "seed templates 생성됨" (> (length actives) 0) true)
+  (check "최소 3개 seed" (>= (length actives) 3) true))
+
+(println "")
+
+; ── test 2: template-detail 조회 ────────────────────────────
+(println "[2] template-detail 조회")
+(let [detail (template-detail "tmpl-minimal")]
+  (check "detail 존재" (nil? detail) false)
+  (check "template_id 일치" (get detail "template_id") "tmpl-minimal")
+  (check "title 있음" (> (length (get detail "title")) 0) true)
+  (check "version 초기값 = 1" (get detail "version") 1))
+
+(println "")
+
+; ── test 3: template-current-body 반환 ──────────────────────
+(println "[3] template-current-body 반환")
+(let [body (template-current-body "tmpl-minimal")]
+  (check "body 존재" (nil? body) false)
+  (check "body 문자열" (> (length body) 0) true))
+
+(println "")
+
+; ── test 4: template.updated 이벤트 + 버전 증가 ─────────────
+(println "[4] template.updated 이벤트 + 버전 증가")
+(write-ev NOW "template.updated"
+  {"template_id" "tmpl-minimal"
+   "new_body_text" "업데이트된 템플릿 본문\n{{party_a}} ↔ {{party_b}}"
+   "updated_at" NOW})
+
+(let [detail (template-detail "tmpl-minimal")
+      new-body (template-current-body "tmpl-minimal")]
+  (check "버전 = 2" (get detail "version") 2)
+  (check "본문 업데이트됨" (str-includes new-body "업데이트된 템플릿") true))
+
+(println "")
+
+; ── test 5: template.archived + active-templates 필터 ───────
+(println "[5] template.archived + active-templates 필터")
+(write-ev NOW "template.archived"
+  {"template_id" "tmpl-nda"
+   "archived_at" NOW})
+
+(let [actives (active-templates)
+      archived-ct (length (filter (fn [t] (= (get (get t "payload") "template_id") "tmpl-nda")) actives))]
+  (check "archived template 제외됨" archived-ct 0)
+  (check "minimal/maintenance 여전히 존재" (> (length actives) 1) true))
+
+(println "")
+
+; ── test 6: template.archived 재보관 금지 (I3) ──────────────
+(println "[6] template.archived 재보관 금지 (I3)")
+(let [is-archived (template-archived? "tmpl-nda")]
+  (check "tmpl-nda archived=true" is-archived true))
+
+(println "")
+
+; ── test 7: template.selected + selected-template 조회 ──────
+(println "[7] template.selected + selected-template 조회")
+(write-ev NOW "template.selected"
+  {"template_id" "tmpl-maintenance"
+   "selected_at" NOW})
+
+(let [sel (selected-template)]
+  (check "selected-template 존재" (nil? sel) false)
+  (check "template_id = tmpl-maintenance" (get sel "template_id") "tmpl-maintenance"))
+
+(println "")
+
+; ── test 8: selected uniqueness (마지막 선택 기준) ────────────
+(println "[8] selected uniqueness (마지막 선택 기준)")
+(write-ev (+ NOW 1000) "template.selected"
+  {"template_id" "tmpl-minimal"
+   "selected_at" (+ NOW 1000)})
+
+(let [sel (selected-template)]
+  (check "최신 선택 = tmpl-minimal" (get sel "template_id") "tmpl-minimal"))
+
+(println "")
+
+; ── test 9: template-exists? / template-archived? bool ──────
+(println "[9] template-exists? / template-archived? bool")
+(check "template-exists? tmpl-minimal" (template-exists? "tmpl-minimal") true)
+(check "template-exists? invalid" (template-exists? "invalid-123") false)
+(check "template-archived? tmpl-minimal" (template-archived? "tmpl-minimal") false)
+(check "template-archived? tmpl-nda" (template-archived? "tmpl-nda") true)
+
+(println "")
+
+; ── test 10: multi-template 독립성 ────────────────────────
+(println "[10] multi-template 독립성")
+(write-ev (+ NOW 2000) "template.created"
+  {"template_id" "tmpl-custom"
+   "title" "커스텀 템플릿"
+   "category" "contract.custom"
+   "body_text" "커스텀 본문\n{{title}}"
+   "created_at" (+ NOW 2000)})
+
+(let [detail-custom (template-detail "tmpl-custom")
+      detail-minimal (template-detail "tmpl-minimal")]
+  (check "custom body 독립" (get detail-custom "body_text") "커스텀 본문\n{{title}}")
+  (check "minimal body 변경 없음" (str-includes (get detail-minimal "body_text") "업데이트된 템플릿") true))
+
+(println "")
+
+; ── test 11: select-contract-template with nil template_id ──
+(println "[11] select-contract-template with nil template_id")
+(let [contract {"party_a" "갑회사" "party_b" "을회사" "title" "테스트" "scope" "범위"
+                "period_start" NOW "period_end" (+ NOW 1000000000)
+                "amount_krw" 100000 "vat_included" false
+                "payment_terms" "즉시" "memo" "테스트" "created_at" NOW}
+      result (select-contract-template nil contract)]
+  (check "nil template_id → minimal fallback" (> (length result) 0) true)
+  (check "변수 치환 적용" (str-includes result "갑회사") true))
+
+(println "")
+
+; ── test 12: select-contract-template with valid template_id ──
+(println "[12] select-contract-template with valid template_id")
+(let [contract {"party_a" "갑회사" "party_b" "을회사" "title" "테스트" "scope" "범위"
+                "period_start" NOW "period_end" (+ NOW 1000000000)
+                "amount_krw" 100000 "vat_included" false
+                "payment_terms" "즉시" "memo" "테스트" "created_at" NOW}
+      result (select-contract-template "tmpl-custom" contract)]
+  (check "custom template 사용" (str-includes result "커스텀 본문") true)
+  (check "변수 치환: 제목" (str-includes result "테스트") true))
+
+(println "")
+
+; ── test 13: template versioning with multiple updates ────────
+(println "[13] template versioning with multiple updates")
+(write-ev (+ NOW 3000) "template.updated"
+  {"template_id" "tmpl-custom"
+   "new_body_text" "두 번째 업데이트\n{{party_a}}"
+   "updated_at" (+ NOW 3000)})
+
+(write-ev (+ NOW 4000) "template.updated"
+  {"template_id" "tmpl-custom"
+   "new_body_text" "세 번째 업데이트\n{{party_b}}"
+   "updated_at" (+ NOW 4000)})
+
+(let [detail (template-detail "tmpl-custom")
+      body (template-current-body "tmpl-custom")]
+  (check "버전 = 3 (created + 2 updates)" (get detail "version") 3)
+  (check "최신 body = 세 번째" (str-includes body "세 번째") true))
+
+(println "")
+
+; ── test 14: active-templates 정렬 (최신 순) ─────────────────
+(println "[14] active-templates 정렬 (최신 순)")
+(let [actives (active-templates)
+      first-id (get (get (get actives 0) "payload") "template_id")]
+  (check "첫 번째 = 최신 생성 또는 최신 이벤트" (> (length first-id) 0) true))
+
+(println "")
+
+; ── test 15: template events count verification ──────────────
+(println "[15] template events count verification")
+(let [all-evs (read-template-events)
+      created-evs (template-events-of-type "template.created")
+      updated-evs (template-events-of-type "template.updated")
+      archived-evs (template-events-of-type "template.archived")
+      selected-evs (template-events-of-type "template.selected")]
+  (check "created events >= 4" (>= (length created-evs) 4) true)
+  (check "updated events >= 3" (>= (length updated-evs) 3) true)
+  (check "archived events >= 1" (>= (length archived-evs) 1) true)
+  (check "selected events >= 2" (>= (length selected-evs) 2) true))
+
+(println "")
+
+; ── test 16: template-events-for-id filter ──────────────────
+(println "[16] template-events-for-id filter")
+(let [custom-evs (template-events-for-id "tmpl-custom")
+      custom-created (filter (fn [e] (= (get e "type") "template.created")) custom-evs)]
+  (check "tmpl-custom 이벤트 존재" (> (length custom-evs) 0) true)
+  (check "custom created event 정확히 1개" (length custom-created) 1))
+
+(println "")
+
+; ── test 17: nil detail for nonexistent template ─────────────
+(println "[17] nil detail for nonexistent template")
+(let [detail (template-detail "nonexistent-123")]
+  (check "nonexistent template → nil" (nil? detail) true))
+
+(println "")
+
+; ── test 18: select-contract-template with archived template ──
+(println "[18] select-contract-template with archived template")
+(let [contract {"party_a" "갑" "party_b" "을" "title" "제목" "scope" "범위"
+                "period_start" NOW "period_end" (+ NOW 1000000000)
+                "amount_krw" 50000 "vat_included" true
+                "payment_terms" "협의" "memo" "" "created_at" NOW}
+      result (select-contract-template "tmpl-nda" contract)]
+  (check "archived template_id → minimal fallback" (> (length result) 0) true))
+
+(println "")
+
+(println "═══════════════════════════════════════════")
+(println (str "결과: " @PASS-COUNT " PASS / " @FAIL-COUNT " FAIL"))
+(println "═══════════════════════════════════════════")
+
+(if (> @FAIL-COUNT 0)
+  (throw (str @FAIL-COUNT " test(s) failed"))
+  (println "✅ 모든 테스트 통과"))
