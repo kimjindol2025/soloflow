@@ -218,7 +218,8 @@
         "</tbody></table>"))))
 
 (defn render-signature-section [c]
-  (let [sig (get c "signature")]
+  (let [sig (get c "signature")
+        st (get c "status")]
     (if (nil? sig)
       (str
         "<h2>서명</h2>"
@@ -227,7 +228,13 @@
           "<label>역할<input name=\"signer_role\" value=\"을\" required></label>"
           "<label>비고 (선택)<input name=\"note\"></label>"
           "<button type=\"submit\">서명 완료 기록</button>"
-        "</form>")
+        "</form>"
+        (if (= st "draft")
+          (str
+            "<form method=\"POST\" action=\"/contracts/" (esc (get c "id")) "/cancel\" style=\"margin-top:1rem\">"
+              "<button type=\"submit\" style=\"background:#999\">계약 취소</button>"
+            "</form>")
+          ""))
       (str
         "<h2>서명 완료</h2>"
         "<div class=\"card\">"
@@ -238,6 +245,23 @@
             (str " · " (esc (get sig "note"))))
           "</p>"
         "</div>"))))
+
+; ── POST /contracts/:id/cancel : contract.cancelled 이벤트 ──
+(defn handle-contract-cancel [req]
+  (let [id (get (get req "params") "id")
+        c (project-contract id)]
+    (cond
+      (nil? c)
+      (server-status 404 "계약을 찾을 수 없습니다")
+
+      (not (= (get c "status") "draft"))
+      (server-status 400 "미서명 상태의 계약만 취소할 수 있습니다")
+
+      :else (do
+        (append-contract-event "contract.cancelled"
+                               {"id" id
+                                "cancelled_at" (now-ms)})
+        (server-redirect (str "/contracts/" id))))))
 
 ; ── POST /contracts/:id/sign : contract.signed 이벤트 ──────
 (defn handle-contract-sign [req]

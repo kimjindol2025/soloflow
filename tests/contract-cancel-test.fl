@@ -1,0 +1,144 @@
+; soloflow contract-cancel-test.fl — v1.2-P0 contract 취소 검증
+; 실행: SOLOFLOW_CONTRACT_EVENTS_PATH=tests/data/contract-cancel-test.jsonl node /root/kim/freelang-v11/bootstrap.js run tests/contract-cancel-test.fl
+
+(load "src/render.fl")
+(load "src/contract-state.fl")
+(load "src/contract-invoice-link-state.fl")
+(load "src/state.fl")
+
+(println "═══ soloflow v1.2-P0 contract-cancel tests ═══")
+(println "")
+
+(define PASS-COUNT (atom 0))
+(define FAIL-COUNT (atom 0))
+
+(defn check [label actual expected]
+  (if (= actual expected)
+    (do (swap! PASS-COUNT + 1)
+        (println (str "  ✓ " label)))
+    (do (swap! FAIL-COUNT + 1)
+        (println (str "  ✗ " label))
+        (println (str "      expected: " expected))
+        (println (str "      actual:   " actual)))))
+
+(println (str "CONTRACT-EVENTS-PATH = " CONTRACT-EVENTS-PATH))
+(if (not (str-includes CONTRACT-EVENTS-PATH "cancel-test"))
+  (do (println "❌ SOLOFLOW_CONTRACT_EVENTS_PATH 미설정")
+      (throw "env var missing"))
+  nil)
+
+(if (file-exists CONTRACT-EVENTS-PATH) (file-delete CONTRACT-EVENTS-PATH) nil)
+
+(defn write-ev [ts type payload]
+  (file-append CONTRACT-EVENTS-PATH
+    (str (json-stringify {"ts" ts "type" type "payload" payload}) "\n")))
+
+(define NOW (now-ms))
+
+; ── test 1: 초기 상태 (contract 없음) ─────────────────────────
+(println "[1] 초기 상태 (contract 없음)")
+(let [c (project-contract "ctr-missing")]
+  (check "nil contract" (nil? c) true))
+
+(println "")
+
+; ── test 2: draft contract 생성 ────────────────────────────────
+(println "[2] draft contract 생성")
+(write-ev NOW "contract.created"
+  {"id" "ctr-001"
+   "title" "웹사이트 리뉴얼 계약"
+   "party_a" "발주사"
+   "party_b" "수행사"
+   "scope" "사이트 구축"
+   "period_start" NOW
+   "period_end" (+ NOW 5184000000)
+   "amount_krw" 5000000
+   "vat_included" true
+   "payment_terms" "계약금 30%"
+   "memo" "테스트 계약"
+   "template_id" nil})
+
+(let [c (project-contract "ctr-001")]
+  (check "contract created" (not (nil? c)) true)
+  (check "status = draft" (get c "status") "draft"))
+
+(println "")
+
+; ── test 3: draft contract 취소 ────────────────────────────────
+(println "[3] draft contract 취소")
+(write-ev (+ NOW 1000) "contract.cancelled"
+  {"id" "ctr-001"
+   "cancelled_at" (+ NOW 1000)})
+
+(let [c (project-contract "ctr-001")]
+  (check "status = cancelled" (get c "status") "cancelled"))
+
+(println "")
+
+; ── test 4: contract-is-cancelled? 검증 ──────────────────────
+(println "[4] contract-is-cancelled? 검증")
+(let [is-cancelled (contract-is-cancelled? "ctr-001")]
+  (check "contract-is-cancelled? = true" is-cancelled true))
+
+(println "")
+
+; ── test 5: cancelled contract에 invoice link 시도 (I1) ──────
+(println "[5] cancelled contract에 invoice link 시도 (I1)")
+; contract-invoice-link.fl의 I1 검증: (= (get contract "status") "cancelled")
+; 실제 핸들러에서는 400을 반환하지만, 여기서는 projection 수준에서 확인
+(let [c (project-contract "ctr-001")]
+  (check "cancelled contract status check" (= (get c "status") "cancelled") true))
+
+(println "")
+
+; ── test 6: signed contract 취소 불가 (draft만 취소 가능) ────
+(println "[6] signed contract 취소 불가 (draft만 취소 가능)")
+(write-ev (+ NOW 2000) "contract.created"
+  {"id" "ctr-002"
+   "title" "서명된 계약"
+   "party_a" "발주사"
+   "party_b" "수행사"
+   "scope" "범위"
+   "period_start" NOW
+   "period_end" (+ NOW 5184000000)
+   "amount_krw" 3000000
+   "vat_included" false
+   "payment_terms" "계약금 50%"
+   "memo" ""
+   "template_id" nil})
+
+(write-ev (+ NOW 3000) "contract.signed"
+  {"id" "ctr-002"
+   "signer_name" "김대리"
+   "signer_role" "을"
+   "signed_at" (+ NOW 3000)
+   "note" ""})
+
+(let [c (project-contract "ctr-002")]
+  (check "signed contract status" (get c "status") "active")
+  ; 실제 핸들러에서는 "미서명 상태의 계약만 취소할 수 있습니다" 400 반환
+  (check "signed contract has signature" (not (nil? (get c "signature"))) true))
+
+(println "")
+
+; ── test 7: audit trail 확인 ──────────────────────────────────
+(println "[7] audit trail 확인")
+(let [evs (contract-events-for-id "ctr-001")
+      created (filter (fn [e] (= (get e "type") "contract.created")) evs)
+      cancelled (filter (fn [e] (= (get e "type") "contract.cancelled")) evs)]
+  (check "created event exists" (> (length created) 0) true)
+  (check "cancelled event exists" (> (length cancelled) 0) true)
+  (if (and (> (length created) 0) (> (length cancelled) 0))
+    (let [c-ts (get (get created 0) "ts")
+          can-ts (get (get cancelled 0) "ts")]
+      (check "cancelled_at > created_at" (> can-ts c-ts) true))))
+
+(println "")
+
+(println "═══════════════════════════════════════════")
+(println (str "결과: " @PASS-COUNT " PASS / " @FAIL-COUNT " FAIL"))
+(println "═══════════════════════════════════════════")
+
+(if (> @FAIL-COUNT 0)
+  (throw (str @FAIL-COUNT " test(s) failed"))
+  (println "✅ 모든 테스트 통과"))

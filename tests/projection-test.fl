@@ -59,16 +59,16 @@
 
 ; ── 테스트 2 : compute-status 4종 ──────────────────────────
 (println "[2] compute-status 4종 (paid/partial/overdue/open)")
-(check "amount=100 paid=100 → paid"
-       (compute-status 100 100 NOW) "paid")
-(check "amount=100 paid=120 → paid (초과수금)"
-       (compute-status 100 120 NOW) "paid")
-(check "amount=100 paid=30 → partial"
-       (compute-status 100 30 NOW) "partial")
-(check "amount=100 paid=0 due past → overdue"
-       (compute-status 100 0 (DAY-OFFSET -5)) "overdue")
-(check "amount=100 paid=0 due future → open"
-       (compute-status 100 0 (DAY-OFFSET 5)) "open")
+(check "amount=100 paid=100 sent=true cancel=false → paid"
+       (compute-status 100 100 NOW true false) "paid")
+(check "amount=100 paid=120 sent=true cancel=false → paid (초과수금)"
+       (compute-status 100 120 NOW true false) "paid")
+(check "amount=100 paid=30 sent=true cancel=false → partial"
+       (compute-status 100 30 NOW true false) "partial")
+(check "amount=100 paid=0 sent=true due past → overdue"
+       (compute-status 100 0 (DAY-OFFSET -5) true false) "overdue")
+(check "amount=100 paid=0 sent=true due future → sent"
+       (compute-status 100 0 (DAY-OFFSET 5) true false) "sent")
 (println "")
 
 ; ── 테스트 3 : Fixture 4종 + projection 통합 ───────────────
@@ -78,6 +78,8 @@
 (write-ev (DAY-OFFSET -10) "invoice.created"
   {"id" "inv-paid" "client" "A사" "amount_krw" 1000000
    "issued_at" (DAY-OFFSET -10) "due_at" (DAY-OFFSET 20) "memo" "paid case"})
+(write-ev (DAY-OFFSET -9) "invoice.sent"
+  {"id" "inv-paid" "sent_at" (DAY-OFFSET -9)})
 (write-ev (DAY-OFFSET -2) "invoice.payment.received"
   {"id" "inv-paid" "paid_amount_krw" 1000000
    "paid_at" (DAY-OFFSET -2) "method" "bank"})
@@ -86,6 +88,8 @@
 (write-ev (DAY-OFFSET -8) "invoice.created"
   {"id" "inv-partial" "client" "B사" "amount_krw" 500000
    "issued_at" (DAY-OFFSET -8) "due_at" (DAY-OFFSET 22) "memo" "partial"})
+(write-ev (DAY-OFFSET -7) "invoice.sent"
+  {"id" "inv-partial" "sent_at" (DAY-OFFSET -7)})
 (write-ev (DAY-OFFSET -1) "invoice.payment.received"
   {"id" "inv-partial" "paid_amount_krw" 200000
    "paid_at" (DAY-OFFSET -1) "method" "bank"})
@@ -94,11 +98,15 @@
 (write-ev (DAY-OFFSET -50) "invoice.created"
   {"id" "inv-overdue" "client" "C사" "amount_krw" 300000
    "issued_at" (DAY-OFFSET -50) "due_at" (DAY-OFFSET -10) "memo" "overdue"})
+(write-ev (DAY-OFFSET -49) "invoice.sent"
+  {"id" "inv-overdue" "sent_at" (DAY-OFFSET -49)})
 
 ; 3-4. open 송장 — 미래 만기, 미입금 (이번 주 due — 5일 후)
 (write-ev (DAY-OFFSET -3) "invoice.created"
   {"id" "inv-open" "client" "D사" "amount_krw" 400000
    "issued_at" (DAY-OFFSET -3) "due_at" (DAY-OFFSET 5) "memo" "open this week"})
+(write-ev (DAY-OFFSET -2) "invoice.sent"
+  {"id" "inv-open" "sent_at" (DAY-OFFSET -2)})
 
 ; projection 검증
 (define INV-PAID (project-invoice "inv-paid"))
@@ -116,7 +124,7 @@
 (check "overdue: status"       (get INV-OVERDUE "status") "overdue")
 (check "overdue: balance=300K" (get INV-OVERDUE "balance") 300000)
 
-(check "open: status"          (get INV-OPEN "status")    "open")
+(check "open: status"          (get INV-OPEN "status")    "sent")
 (check "open: balance=400K"    (get INV-OPEN "balance")   400000)
 (println "")
 

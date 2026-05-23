@@ -128,6 +128,6 @@
 
 ; ── Contract이 cancelled인지 확인 (I1: cancelled contract link 금지) ──
 ; contract-state.fl 에서 제공하는 project-contract 사용
-; (defn contract-is-cancelled? [contract-id]
-;   (let [c (project-contract contract-id)]
-;     (= (get c "status") "cancelled")))
+(defn contract-is-cancelled? [contract-id]
+  (let [c (project-contract contract-id)]
+    (and (not (nil? c)) (= (get c "status") "cancelled"))))
