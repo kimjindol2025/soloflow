@@ -10,8 +10,10 @@
 (load "src/cron.fl")
 (load "src/schedule-state.fl")
 (load "src/schedule.fl")
+(load "src/focus-state.fl")
+(load "src/focus.fl")
 
-; ── 라우트 등록 (22개: invoice 8 + contract 6 + schedule 8) ──
+; ── 라우트 등록 (33개: invoice 8 + contract 6 + schedule 8 + focus 11) ──
 ; invoice 8 (M1.1: send/cancel 추가)
 (server-get  "/"                    "handle-index")
 (server-get  "/invoices"            "handle-invoices")
@@ -37,6 +39,18 @@
 (server-post "/schedule/project/:id/milestone/:mid/complete" "handle-milestone-complete")
 (server-post "/schedule/project/:id/focus-start"         "handle-focus-start")
 (server-post "/schedule/project/:id/focus-end"           "handle-focus-end")
+; focus 11 (M4: Pomodoro 6 + Habit 5)
+(server-get  "/focus"                      "handle-focus-today")
+(server-post "/focus/start"                "handle-focus-start")
+(server-post "/focus/pause"                "handle-focus-pause")
+(server-post "/focus/resume"               "handle-focus-resume")
+(server-post "/focus/complete"             "handle-focus-complete")
+(server-post "/focus/cancel"               "handle-focus-cancel")
+(server-get  "/habit/list"                 "handle-habit-list")
+(server-post "/habit"                      "handle-habit-create")
+(server-post "/focus/habit/:id/check"      "handle-habit-check")
+(server-post "/focus/habit/:id/uncheck"    "handle-habit-uncheck")
+(server-post "/habit/:id/archive"          "handle-habit-archive")
 
 (println "soloflow listening on http://localhost:41955")
 (server-start 41955)

@@ -595,7 +595,79 @@
       "verified": true,
       "verified_at": "2026-05-23",
       "verified_evidence": "schedule-test.fl 27/27 PASS (project create/projection + milestone add/complete + progress % + focus session + multi-project isolation + today filter). src/main.fl integrated (load schedule-state/schedule + 8 routes). E2E: GET /schedule list + create form + detail view with milestones + focus windows all functional.",
-      "next": ["M4"]
+      "next": ["task-009"]
+    },
+
+    "task-009": {
+      "t": "task",
+      "v": "M4 focus — Pomodoro 세션 + 습관 추적",
+      "spec": {
+        "domain_events": {
+          "focus.started":    "{id (=session_id), project_id?, started_at, planned_mins}",
+          "focus.paused":     "{session_id, paused_at}",
+          "focus.resumed":    "{session_id, resumed_at}",
+          "focus.completed":  "{session_id, completed_at, actual_mins, notes?}",
+          "focus.cancelled":  "{session_id, cancelled_at, reason?}",
+          "habit.created":    "{id, title, description?}",
+          "habit.checked":    "{habit_id, checked_at, date (yyyy-MM-dd)}",
+          "habit.unchecked":  "{habit_id, unchecked_at, date (yyyy-MM-dd)}",
+          "habit.archived":   "{habit_id, archived_at}"
+        },
+        "storage": {
+          "underlying": "JSONL — data/focus-events.jsonl (invoice/contract/schedule 과 분리)"
+        },
+        "state_projection": {
+          "active_session": "focus.started 있고 completed/cancelled 없음",
+          "today_sessions": "오늘 completed 세션 리스트",
+          "habit_streak": "연속 체크 일 수 (effective-checks 기반)",
+          "habit_checked_today": "오늘 net check/uncheck 상태 (마지막 이벤트 기준)"
+        },
+        "ssr_routes": {
+          "GET /focus":              "오늘 대시보드 (active session + today stats + habits)",
+          "POST /focus/start":       "focus.started 이벤트",
+          "POST /focus/pause":       "focus.paused 이벤트",
+          "POST /focus/resume":      "focus.resumed 이벤트",
+          "POST /focus/complete":    "focus.completed 이벤트",
+          "POST /focus/cancel":      "focus.cancelled 이벤트",
+          "GET /habit/list":         "습관 목록",
+          "POST /habit":             "habit.created 이벤트",
+          "POST /focus/habit/:id/check":   "habit.checked 이벤트",
+          "POST /focus/habit/:id/uncheck": "habit.unchecked 이벤트",
+          "POST /habit/:id/archive": "habit.archived 이벤트"
+        }
+      },
+      "scope_in": [
+        "src/focus-state.fl: projection (active-session, session-paused?, today-sessions, today-focus-mins, habit-*, effective-checks, streak)",
+        "src/focus.fl: 11 라우트 + invariant 검사 (I1-I4)",
+        "src/render.fl: nav 에 집중 메뉴 추가",
+        "src/main.fl: focus-state/focus 로드 + 11 routes 등록",
+        "tests/focus-test.fl: 21 검증 (projection + habit + streak + invariant)"
+      ],
+      "scope_out_v1_1": [
+        "Pomodoro 장시간 추적 (week/month)",
+        "Pomodoro 통계·분석 대시보드",
+        "습관 공유·소셜",
+        "Slack/Discord 알림"
+      ],
+      "entry": [
+        "src/focus-state.fl",
+        "src/focus.fl",
+        "src/render.fl",
+        "src/main.fl",
+        "tests/focus-test.fl"
+      ],
+      "check": [
+        "focus-test.fl 21/21 PASS",
+        "live: GET /focus 대시보드 렌더링",
+        "live: focus start/pause/resume/complete 상태 전환",
+        "live: habit create/check/uncheck/archive 동작",
+        "live: habit-streak 연속 계산 정확",
+        "invariant I1-I4 검증 (409 에러 처리)"
+      ],
+      "verified": true,
+      "verified_at": "2026-05-23",
+      "verified_evidence": "focus-test.fl 21/21 PASS (focus.started projection + active-session + pause/resume + completed/cancelled + habit create/check/uncheck/archive + streak calculation + multi-habit isolation). src/main.fl: 33 routes (22 existing + 11 focus). render.fl nav updated. E2E start confirmed (server listening).",
+      "next": []
     },
 
     "err-003": {

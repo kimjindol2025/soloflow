@@ -1,0 +1,249 @@
+; soloflow focus.fl — M4 HTTP routes (Pomodoro + Habit)
+
+; ── GET /focus : 오늘 대시보드 ────────────────────────────────
+(defn handle-focus-today [req]
+  (let [active (active-session)
+        today-mins (today-focus-mins)
+        today-count (length (today-sessions))
+        habits (all-habits)
+        body (str
+          "<h1>오늘의 집중</h1>"
+          (if (nil? active)
+            (str
+              "<div class=\"card\">"
+              "<form method=\"POST\" action=\"/focus/start\">"
+                "<label>계획 시간(분)<input name=\"planned_mins\" type=\"number\" min=\"1\" value=\"25\" required></label>"
+                "<label>프로젝트(선택)<input name=\"project_id\" placeholder=\"프로젝트 ID\"></label>"
+                "<button type=\"submit\">집중 시작</button>"
+              "</form>"
+              "</div>")
+            (let [active-payload (get active "payload")
+                  sid (get active-payload "id")
+                  paused? (session-paused? sid)
+                  start-ts (get active-payload "started_at")
+                  planned-ms (get active-payload "planned_mins")]
+              (str
+                "<div class=\"card\">"
+                  "<h2>진행 중</h2>"
+                  "<p>시작: " (date-format start-ts "HH:mm") "</p>"
+                  "<p>계획: " (str planned-ms) "분</p>"
+                  "<p>상태: " (if paused? "일시정지" "진행 중") "</p>"
+                  "<form method=\"POST\" style=\"display:inline\">"
+                    (if paused?
+                      (str "<button formaction=\"/focus/resume\" type=\"submit\">재개</button>")
+                      (str "<button formaction=\"/focus/pause\" type=\"submit\">일시정지</button>"))
+                  "</form>"
+                  "<form method=\"POST\" action=\"/focus/complete\" style=\"display:inline\">"
+                    "<input name=\"actual_mins\" type=\"number\" placeholder=\"실제 시간\" required style=\"width:80px\">"
+                    "<button type=\"submit\">완료</button>"
+                  "</form>"
+                  "<form method=\"POST\" action=\"/focus/cancel\" style=\"display:inline\">"
+                    "<button type=\"submit\" style=\"background:#999\">취소</button>"
+                  "</form>"
+                "</div>")))
+          "<h2>오늘 통계</h2>"
+          "<div class=\"card\">"
+            "<p>완료: <strong>" (str today-count) "</strong>개</p>"
+            "<p>총 시간: <strong>" (str today-mins) "</strong>분</p>"
+          "</div>"
+          "<h2>오늘의 습관(" (str (length habits)) "개)</h2>"
+          (if (= (length habits) 0)
+            "<p class=\"muted\">습관이 없습니다.</p>"
+            (str
+              "<div class=\"card\">"
+              (reduce
+                (fn [acc h]
+                  (let [hid (get (get h "payload") "id")
+                        title (get (get h "payload") "title")
+                        checked? (habit-checked-today? hid)
+                        streak (habit-streak hid)]
+                    (str acc
+                      "<div style=\"margin-bottom:8px\">"
+                      "<p style=\"display:inline\">" (esc title) "</p>"
+                      " <small>" (str streak) "일 연속</small> "
+                      (if checked?
+                        (str "<form method=\"POST\" action=\"/focus/habit/" (esc hid) "/uncheck\" style=\"display:inline\">"
+                          "<button type=\"submit\" style=\"background:#28a745\">✓ 오늘</button>"
+                          "</form>")
+                        (str "<form method=\"POST\" action=\"/focus/habit/" (esc hid) "/check\" style=\"display:inline\">"
+                          "<button type=\"submit\">체크</button>"
+                          "</form>"))
+                      "</div>")))
+                ""
+                habits)
+              "</div>"))
+          (render-habit-add-section))]
+    (server-html (layout "집중" body))))
+
+; ── 습관 추가 폼 ──────────────────────────────────────────────
+(defn render-habit-add-section []
+  (str
+    "<h2>습관 추가</h2>"
+    "<div class=\"card\">"
+    "<form method=\"POST\" action=\"/focus/habit\">"
+      "<label>습관명<input name=\"title\" required></label>"
+      "<label>설명(선택)<textarea name=\"description\" rows=\"2\"></textarea></label>"
+      "<button type=\"submit\">추가</button>"
+    "</form>"
+    "</div>"))
+
+; ── POST /focus/start : 집중 세션 시작 ────────────────────────
+(defn handle-focus-start [req]
+  (let [active (active-session)]
+    (if (not (nil? active))
+      (server-status 409 "진행 중인 세션이 있습니다")
+      (let [body (get req "body")
+            planned (form-num body "planned_mins")
+            project-id (form-field body "project_id")
+            session-id (make-session-id)
+            payload {"id" session-id
+                     "project_id" (if (str-blank? project-id) nil project-id)
+                     "started_at" (now-ms)
+                     "planned_mins" planned}]
+        (append-focus-event "focus.started" payload)
+        (server-redirect "/focus")))))
+
+; ── POST /focus/pause : 세션 일시정지 ──────────────────────────
+(defn handle-focus-pause [req]
+  (let [active (active-session)]
+    (if (nil? active)
+      (server-status 409 "활성 세션이 없습니다")
+      (let [sid (get (get active "payload") "id")]
+        (if (session-paused? sid)
+          (server-status 409 "이미 일시정지 중입니다")
+          (let [payload {"session_id" sid "paused_at" (now-ms)}]
+            (append-focus-event "focus.paused" payload)
+            (server-redirect "/focus")))))))
+
+; ── POST /focus/resume : 세션 재개 ────────────────────────────
+(defn handle-focus-resume [req]
+  (let [active (active-session)]
+    (if (nil? active)
+      (server-status 409 "활성 세션이 없습니다")
+      (let [sid (get (get active "payload") "id")]
+        (if (not (session-paused? sid))
+          (server-status 409 "일시정지 상태가 아닙니다")
+          (let [payload {"session_id" sid "resumed_at" (now-ms)}]
+            (append-focus-event "focus.resumed" payload)
+            (server-redirect "/focus")))))))
+
+; ── POST /focus/complete : 세션 완료 ───────────────────────────
+(defn handle-focus-complete [req]
+  (let [active (active-session)]
+    (if (nil? active)
+      (server-status 409 "활성 세션이 없습니다")
+      (let [body (get req "body")
+            actual (form-num body "actual_mins")
+            sid (get (get active "payload") "id")
+            payload {"session_id" sid
+                     "completed_at" (now-ms)
+                     "actual_mins" actual
+                     "notes" ""}]
+        (append-focus-event "focus.completed" payload)
+        (server-redirect "/focus")))))
+
+; ── POST /focus/cancel : 세션 취소 ─────────────────────────────
+(defn handle-focus-cancel [req]
+  (let [active (active-session)]
+    (if (nil? active)
+      (server-status 409 "활성 세션이 없습니다")
+      (let [body (get req "body")
+            reason (form-field body "reason")
+            sid (get (get active "payload") "id")
+            payload {"session_id" sid
+                     "cancelled_at" (now-ms)
+                     "reason" reason}]
+        (append-focus-event "focus.cancelled" payload)
+        (server-redirect "/focus")))))
+
+; ── GET /habit/list : 습관 목록 ───────────────────────────────
+(defn handle-habit-list [req]
+  (let [habits (all-habits)
+        body (str
+          "<h1>습관(" (str (length habits)) "개)</h1>"
+          "<p><a href=\"/focus\">< 대시보드로</a></p>"
+          (if (= (length habits) 0)
+            "<p class=\"muted\">등록된 습관이 없습니다.</p>"
+            (str
+              "<table><thead><tr><th>습관</th><th>상태</th><th>연속</th><th>액션</th></tr></thead><tbody>"
+              (reduce
+                (fn [acc h]
+                  (let [hid (get (get h "payload") "id")
+                        title (get (get h "payload") "title")
+                        checked? (habit-checked-today? hid)
+                        streak (habit-streak hid)]
+                    (str acc
+                      "<tr>"
+                      "<td>" (esc title) "</td>"
+                      "<td>" (if checked? "✓" "—") "</td>"
+                      "<td>" (str streak) "</td>"
+                      "<td>"
+                        (if checked?
+                          (str "<form method=\"POST\" action=\"/habit/" (esc hid) "/uncheck\" style=\"display:inline\">"
+                            "<button type=\"submit\">취소</button>"
+                            "</form>")
+                          (str "<form method=\"POST\" action=\"/habit/" (esc hid) "/check\" style=\"display:inline\">"
+                            "<button type=\"submit\">체크</button>"
+                            "</form>"))
+                        " <form method=\"POST\" action=\"/habit/" (esc hid) "/archive\" style=\"display:inline\">"
+                          "<button type=\"submit\" style=\"background:#999\">보관</button>"
+                        "</form>"
+                      "</td>"
+                      "</tr>")))
+                ""
+                habits)
+              "</tbody></table>"))
+          (render-habit-add-section))]
+    (server-html (layout "습관" body))))
+
+; ── POST /habit/create : 습관 생성 ─────────────────────────────
+(defn handle-habit-create [req]
+  (let [body (get req "body")
+        title (form-field body "title")
+        description (form-field body "description")]
+    (if (str-blank? title)
+      (server-status 400 "습관명은 필수입니다")
+      (let [habit-id (make-habit-id)
+            payload {"id" habit-id
+                     "title" title
+                     "description" description}]
+        (append-focus-event "habit.created" payload)
+        (server-redirect "/habit/list")))))
+
+; ── POST /habit/:id/check : 습관 체크 (오늘) ───────────────────
+(defn handle-habit-check [req]
+  (let [habit-id (get (get req "params") "id")
+        detail (habit-detail habit-id)]
+    (if (nil? detail)
+      (server-status 404 "습관을 찾을 수 없습니다")
+      (let [today-str (date-format (now-ms) "yyyy-MM-dd")
+            payload {"habit_id" habit-id
+                     "checked_at" (now-ms)
+                     "date" today-str}]
+        (append-focus-event "habit.checked" payload)
+        (server-redirect "/focus")))))
+
+; ── POST /habit/:id/uncheck : 습관 체크 취소 (오늘) ──────────────
+(defn handle-habit-uncheck [req]
+  (let [habit-id (get (get req "params") "id")
+        detail (habit-detail habit-id)]
+    (if (nil? detail)
+      (server-status 404 "습관을 찾을 수 없습니다")
+      (let [today-str (date-format (now-ms) "yyyy-MM-dd")
+            payload {"habit_id" habit-id
+                     "unchecked_at" (now-ms)
+                     "date" today-str}]
+        (append-focus-event "habit.unchecked" payload)
+        (server-redirect "/focus")))))
+
+; ── POST /habit/:id/archive : 습관 보관 ────────────────────────
+(defn handle-habit-archive [req]
+  (let [habit-id (get (get req "params") "id")
+        detail (habit-detail habit-id)]
+    (if (nil? detail)
+      (server-status 404 "습관을 찾을 수 없습니다")
+      (if (get detail "archived")
+        (server-status 409 "이미 보관된 습관입니다")
+        (let [payload {"habit_id" habit-id "archived_at" (now-ms)}]
+          (append-focus-event "habit.archived" payload)
+          (server-redirect "/habit/list"))))))

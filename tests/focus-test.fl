@@ -1,0 +1,297 @@
+; soloflow focus-test.fl — task-M4 focus (Pomodoro + Habit) 검증
+; 실행: SOLOFLOW_FOCUS_EVENTS_PATH=tests/data/focus-test.jsonl node /root/kim/freelang-v11/bootstrap.js run tests/focus-test.fl
+
+(load "src/render.fl")
+(load "src/focus-state.fl")
+
+(println "═══ soloflow task-M4 focus tests ═══")
+(println "")
+
+(define PASS-COUNT (atom 0))
+(define FAIL-COUNT (atom 0))
+
+(defn check [label actual expected]
+  (if (= actual expected)
+    (do (swap! PASS-COUNT + 1)
+        (println (str "  ✓ " label)))
+    (do (swap! FAIL-COUNT + 1)
+        (println (str "  ✗ " label))
+        (println (str "      expected: " expected))
+        (println (str "      actual:   " actual)))))
+
+(println (str "FOCUS-EVENTS-PATH = " FOCUS-EVENTS-PATH))
+(if (not (str-includes FOCUS-EVENTS-PATH "focus-test"))
+  (do (println "❌ SOLOFLOW_FOCUS_EVENTS_PATH 미설정 (focus-test)")
+      (throw "env var missing"))
+  nil)
+
+(if (file-exists FOCUS-EVENTS-PATH) (file-delete FOCUS-EVENTS-PATH) nil)
+
+(defn write-ev [ts type payload]
+  (file-append FOCUS-EVENTS-PATH
+    (str (json-stringify {"ts" ts "type" type "payload" payload}) "\n")))
+
+(define NOW (now-ms))
+(define D1 86400000)
+(define DAY-OFFSET (fn [n] (+ NOW (* D1 n))))
+
+; ── test 1: focus.started 이벤트 저장 및 조회 ─────────────────
+(println "[1] focus.started projection")
+
+(let [session-id "pomo-001"
+      start-ts NOW]
+  (write-ev start-ts "focus.started"
+    {"id" session-id
+     "project_id" nil
+     "started_at" start-ts
+     "planned_mins" 25})
+
+  (let [started-list (focus-events-of-type "focus.started")]
+    (check "focus.started 1개 이벤트" (length started-list) 1)
+    (check "이벤트 타입 일치" (get (get started-list 0) "type") "focus.started")))
+
+(println "")
+
+; ── test 2: active-session 식별 ──────────────────────────────
+(println "[2] active-session 식별")
+
+(let [active (active-session)]
+  (check "active session 있음" (nil? active) false)
+  (check "session ID 일치" (get (get active "payload") "id") "pomo-001"))
+
+(println "")
+
+; ── test 3: pause/resume 상태 전환 ────────────────────────────
+(println "[3] pause/resume 상태 전환")
+
+(write-ev (DAY-OFFSET 0) "focus.paused"
+  {"session_id" "pomo-001"
+   "paused_at" (DAY-OFFSET 0)})
+
+(let [paused? (session-paused? "pomo-001")]
+  (check "일시정지 상태 감지" paused? true))
+
+(write-ev (DAY-OFFSET 0) "focus.resumed"
+  {"session_id" "pomo-001"
+   "resumed_at" (DAY-OFFSET 0)})
+
+(let [paused? (session-paused? "pomo-001")]
+  (check "재개 후 일시정지 false" paused? false))
+
+(println "")
+
+; ── test 4: focus.completed → today-sessions 반영 ─────────────
+(println "[4] focus.completed → today-sessions 반영")
+
+(write-ev NOW "focus.completed"
+  {"session_id" "pomo-001"
+   "completed_at" NOW
+   "actual_mins" 24
+   "notes" ""})
+
+(let [today-sessions (today-sessions)]
+  (check "오늘 완료 세션 1개" (length today-sessions) 1)
+  (check "실제 소요 시간 24분" (get (get today-sessions 0) "actual_mins") 24))
+
+(println "")
+
+; ── test 5: focus.cancelled → active-session nil ──────────────
+(println "[5] focus.cancelled → active-session nil")
+
+(let [session-id2 "pomo-002"]
+  (write-ev (DAY-OFFSET 0) "focus.started"
+    {"id" session-id2
+     "project_id" nil
+     "started_at" (DAY-OFFSET 0)
+     "planned_mins" 25})
+
+  (let [active-before (active-session)]
+    (check "새 세션 active" (nil? active-before) false))
+
+  (write-ev (DAY-OFFSET 0) "focus.cancelled"
+    {"session_id" session-id2
+     "cancelled_at" (DAY-OFFSET 0)
+     "reason" "중단"})
+
+  (let [active-after (active-session)]
+    (check "취소 후 active-session nil" (nil? active-after) true)))
+
+(println "")
+
+; ── test 6: 오늘 총 집중 시간 계산 ──────────────────────────────
+(println "[6] today-focus-mins 계산")
+
+(let [session-id3 "pomo-003"
+      session-id4 "pomo-004"]
+  (write-ev NOW "focus.started"
+    {"id" session-id3
+     "project_id" nil
+     "started_at" NOW
+     "planned_mins" 25})
+
+  (write-ev NOW "focus.completed"
+    {"session_id" session-id3
+     "completed_at" NOW
+     "actual_mins" 23
+     "notes" ""})
+
+  (write-ev NOW "focus.started"
+    {"id" session-id4
+     "project_id" nil
+     "started_at" NOW
+     "planned_mins" 25})
+
+  (write-ev NOW "focus.completed"
+    {"session_id" session-id4
+     "completed_at" NOW
+     "actual_mins" 20
+     "notes" ""})
+
+  (let [today-mins (today-focus-mins)]
+    (check "오늘 총 67분 (24+23+20)" (= today-mins 67) true)))
+
+(println "")
+
+; ── test 7: 습관 생성 및 조회 ──────────────────────────────────
+(println "[7] habit.created + all-habits")
+
+(let [habit-id "habit-001"
+      habit-id2 "habit-002"]
+  (write-ev NOW "habit.created"
+    {"id" habit-id
+     "title" "명상"
+     "description" "10분"})
+
+  (write-ev NOW "habit.created"
+    {"id" habit-id2
+     "title" "운동"
+     "description" "30분"})
+
+  (let [habits (all-habits)]
+    (check "습관 2개" (length habits) 2)))
+
+(println "")
+
+; ── test 8: habit.checked + habit-checked-today? ──────────────
+(println "[8] habit.checked + habit-checked-today?")
+
+(let [habit-id "habit-001"
+      today-str (date-format NOW "yyyy-MM-dd")]
+  (write-ev NOW "habit.checked"
+    {"habit_id" habit-id
+     "checked_at" NOW
+     "date" today-str})
+
+  (let [checked? (habit-checked-today? habit-id)]
+    (check "오늘 체크됨" checked? true)))
+
+(println "")
+
+; ── test 9: habit.unchecked → 오늘 미체크 ─────────────────────
+(println "[9] habit.unchecked → 미체크")
+
+(let [habit-id "habit-001"
+      today-str (date-format NOW "yyyy-MM-dd")]
+  (write-ev NOW "habit.unchecked"
+    {"habit_id" habit-id
+     "unchecked_at" NOW
+     "date" today-str})
+
+  (let [checked? (habit-checked-today? habit-id)]
+    (check "unchecked 후 false" checked? false)))
+
+(println "")
+
+; ── test 10: habit.archived → all-habits 제외 ──────────────────
+(println "[10] habit.archived → all-habits 제외")
+
+(let [habit-id "habit-002"]
+  (write-ev NOW "habit.archived"
+    {"habit_id" habit-id
+     "archived_at" NOW})
+
+  (let [habits (all-habits)]
+    (check "보관된 습관 제외 (1개 남음)" (length habits) 1)))
+
+(println "")
+
+; ── test 11: habit-streak 연속 계산 ──────────────────────────────
+(println "[11] habit-streak 연속 계산")
+
+(let [habit-id "habit-003"]
+  (write-ev NOW "habit.created"
+    {"id" habit-id
+     "title" "독서"
+     "description" ""})
+
+  ; 오늘, 어제, 그제 체크
+  (let [today-str (date-format NOW "yyyy-MM-dd")
+        yesterday-str (date-format (- NOW 86400000) "yyyy-MM-dd")
+        day-before-str (date-format (- NOW 172800000) "yyyy-MM-dd")]
+
+    (write-ev NOW "habit.checked"
+      {"habit_id" habit-id
+       "checked_at" NOW
+       "date" today-str})
+
+    (write-ev (- NOW 86400000) "habit.checked"
+      {"habit_id" habit-id
+       "checked_at" (- NOW 86400000)
+       "date" yesterday-str})
+
+    (write-ev (- NOW 172800000) "habit.checked"
+      {"habit_id" habit-id
+       "checked_at" (- NOW 172800000)
+       "date" day-before-str})
+
+    (let [streak (habit-streak habit-id)]
+      (check "3일 연속 streak" (>= streak 3) true))))
+
+(println "")
+
+; ── test 12: 습관 상세 정보 ──────────────────────────────────────
+(println "[12] habit-detail 조회")
+
+(let [habit-id "habit-001"
+      detail (habit-detail habit-id)]
+  (check "detail 존재" (nil? detail) false)
+  (check "제목 일치" (get detail "title") "명상")
+  (check "archived 상태 확인" (get detail "archived") false))
+
+(println "")
+
+; ── test 13: 다중 습관 독립성 ────────────────────────────────────
+(println "[13] 다중 습관 독립성")
+
+(let [habit-a "habit-a"
+      habit-b "habit-b"
+      today-str (date-format NOW "yyyy-MM-dd")]
+  (write-ev NOW "habit.created"
+    {"id" habit-a
+     "title" "습관A"
+     "description" ""})
+
+  (write-ev NOW "habit.created"
+    {"id" habit-b
+     "title" "습관B"
+     "description" ""})
+
+  (write-ev NOW "habit.checked"
+    {"habit_id" habit-a
+     "checked_at" NOW
+     "date" today-str})
+
+  (let [checked-a (habit-checked-today? habit-a)
+        checked-b (habit-checked-today? habit-b)]
+    (check "습관A 체크됨" checked-a true)
+    (check "습관B 미체크" checked-b false)))
+
+(println "")
+
+(println "═══════════════════════════════════════════")
+(println (str "결과: " @PASS-COUNT " PASS / " @FAIL-COUNT " FAIL"))
+(println "═══════════════════════════════════════════")
+
+(if (> @FAIL-COUNT 0)
+  (throw (str @FAIL-COUNT " test(s) failed"))
+  (println "✅ 모든 테스트 통과"))
