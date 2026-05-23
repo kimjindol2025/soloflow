@@ -12,7 +12,7 @@
     "not": "팀 협업 도구 아님 (단일 사용자 single-tenant). 회계 정산 SaaS 아님 (세무사 대체 X — 보조 데이터 제공만). 메신저·CRM 통합 허브 아님 (외부 SaaS API 흡수 금지). 모바일 native 앱 아님 v1 (순수 SSR 웹). 다국가 세무/통화 자동 변환 v1 미지원 (KRW 단일)"
   },
 
-  "hot": "task-006",
+  "hot": "M2.1",
 
   "constitution": {
     "1": "AI 전용. 인간 가독성을 위한 구조 타협 금지",
@@ -463,6 +463,70 @@
       "verified": true,
       "verified_at": "2026-05-23",
       "verified_evidence": "lifecycle-test.fl 31/31 PASS (6-state 전이 + invariant I1-I5). status-badge 6종 (draft/sent/partial/paid/overdue/cancelled). render-action-buttons 상태별 버튼 분기. handle-send/cancel/pay invariant 검사 (409 에러).",
+      "next": ["task-007"]
+    },
+
+    "task-007": {
+      "t": "task",
+      "v": "M2.1 contract cron — 일일 expiring reminder + time-based projection consistency",
+      "spec": {
+        "domain_events_added": {
+          "contract.expiring": "{id, expiring_at, days_until_expire, threshold_days (14/7/1), triggered_by_cron}"
+        },
+        "cron_behavior": {
+          "schedule":  "매일 정해진 시각 (예: 자정 UTC). single-tenant 단일 인스턴스만 실행 (multi-process 동시 실행 금지)",
+          "scan": "모든 active contract → period_end 계산 → 14d/7d/1d threshold 검사",
+          "duplicate_collapse": "같은 contract + 같은 threshold → 최근 contract.expiring 이벤트 1개만 (idempotent). 다시 cron 재실행해도 중복 X",
+          "skip_cancelled": "cancelled contract는 reminder 생성 안 함 (이미 끝난 것). status projection 확인 후 skip"
+        },
+        "invariants": [
+          "I1: expired projection-only. reminder 없음. cron 대상 아님",
+          "I2: same threshold duplicate 금지 (같은 contract + 같은 14d → 1회만). 2회 목 cron 재실행해도 409 X, idempotent",
+          "I3: cancelled contract reminder 금지. cancelled_at 있으면 remind 안 함",
+          "I4: reminder != state mutation. contract.expiring 이벤트는 status 변경 X. projection-only audit trail"
+        ],
+        "projection": {
+          "contract_reminders": "contract id → recent contract.expiring 이벤트들 (threshold 별 스냅샷)",
+          "expiring_contracts_14d": "14d threshold reminder 있는 contract 필터 (시각적 경고)",
+          "expiring_contracts_7d": "7d threshold reminder",
+          "expiring_contracts_1d": "1d threshold reminder"
+        },
+        "ssr_routes_changed": {
+          "GET /contracts": "expiring reminder badge 표시 (14d: yellow, 7d: orange, 1d: red)",
+          "GET /contracts/:id": "recent contract.expiring 이벤트들 timeline 표시"
+        }
+      },
+      "scope_in": [
+        "src/contract-state.fl: contract-expiring? 헬퍼 (period_end - now <= 14d 검사)",
+        "src/contract-state.fl: contract-expired? 헬퍼 (period_end < now, cron 제외)",
+        "src/contract-state.fl: append-contract-expiring-event 함수 (contract.expiring 기록)",
+        "src/cron.fl: 신규 파일. daily cron driver (매일 1회)",
+        "src/cron.fl: scan-expiring-contracts 함수 (전체 contract 스캔 + threshold 검사)",
+        "src/cron.fl: idempotent check (same contract + same threshold → 최근 이벤트 1개만)",
+        "src/contract.fl: 14d/7d/1d reminder badge 렌더링 (상세/리스트)",
+        "src/render.fl: expiring badge style (draft/active/expired 와 별개, reminder 스타일)",
+        "tests/cron-test.fl: cron scan + duplicate collapse + boundary (14d/7d/1d) + cancelled skip 검증"
+      ],
+      "scope_out_v1_1": [
+        "Discord/이메일 알림 발송 (reminder 이벤트만 기록, 발송은 외부 도구)",
+        "타임존 설정 (UTC 고정 v1)",
+        "cron 스케줄 설정 UI (v2 후보)"
+      ],
+      "entry": [
+        "src/cron.fl",
+        "src/contract-state.fl",
+        "src/contract.fl",
+        "src/render.fl",
+        "tests/cron-test.fl"
+      ],
+      "check": [
+        "cron-test.fl PASS (scan 정확 + duplicate collapse + boundary ± 14d/7d/1d + cancelled skip)",
+        "live: 14d reminder 생성 → badge 표시",
+        "live: cron 재실행 → 중복 X (idempotent)",
+        "live: contract cancelled → reminder 안 생김",
+        "live: expired contract → reminder 안 생김 (projection-only)"
+      ],
+      "verified": false,
       "next": []
     },
 
