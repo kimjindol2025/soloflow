@@ -1,0 +1,133 @@
+; soloflow contract-invoice-link-state.fl — v1.1-C 계약↔송장 연결
+; contract ↔ invoice 매핑 (bounded-context 분리, meta aggregate)
+
+; ── EVENTS-PATH override (테스트 격리) ──────────────────────
+(define CONTRACT-INVOICE-LINK-EVENTS-PATH
+  (let [override (env-get "SOLOFLOW_CONTRACT_INVOICE_LINK_EVENTS_PATH")]
+    (if (or (nil? override) (str-blank? override)) "data/contract-invoice-link-events.jsonl" override)))
+
+; ── 이벤트 append ──────────────────────────────────────────
+(defn append-link-event [type payload]
+  (let [ev {"ts" (now-ms) "type" type "payload" payload}
+        line (str (json-stringify ev) "\n")]
+    (file-append CONTRACT-INVOICE-LINK-EVENTS-PATH line)
+    ev))
+
+; ── 전체 이벤트 ─────────────────────────────────────────────
+(defn read-link-events []
+  (if (not (file-exists CONTRACT-INVOICE-LINK-EVENTS-PATH))
+    []
+    (let [raw (file-read CONTRACT-INVOICE-LINK-EVENTS-PATH)
+          lines (str-lines raw)
+          non-empty (filter (fn [l] (not (str-blank? l))) lines)]
+      (map (fn [l] (json-parse l)) non-empty))))
+
+(defn link-events-of-type [type]
+  (filter (fn [e] (= (get e "type") type)) (read-link-events)))
+
+(defn link-events-for-contract [contract-id]
+  (filter
+    (fn [e] (= (get (get e "payload") "contract_id") contract-id))
+    (read-link-events)))
+
+(defn link-events-for-invoice [invoice-id]
+  (filter
+    (fn [e] (= (get (get e "payload") "invoice_id") invoice-id))
+    (read-link-events)))
+
+; ── Contract의 linked invoices (1:N) ───────────────────────
+; contract_id → [{invoice_id, linked_at, unlinked_at}...]
+(defn contract-links [contract-id]
+  (let [evs (link-events-for-contract contract-id)
+        ; build map of invoice_id → {linked_at, unlinked_at}
+        all-links (reduce
+                    (fn [acc ev]
+                      (let [type (get ev "type")
+                            payload (get ev "payload")
+                            inv-id (get payload "invoice_id")]
+                        (if (= type "contract_invoice_linked")
+                          (assoc acc inv-id {"invoice_id" inv-id
+                                             "linked_at" (get payload "linked_at")
+                                             "unlinked_at" nil})
+                          (if (= type "contract_invoice_unlinked")
+                            (if (contains? acc inv-id)
+                              (assoc acc inv-id (assoc (get acc inv-id) "unlinked_at" (get payload "unlinked_at")))
+                              acc)
+                            acc))))
+                    {}
+                    evs)]
+    ; filter: keep only linked (unlinked_at = nil)
+    (filter
+      (fn [ev] (nil? (get ev "unlinked_at")))
+      (map
+        (fn [inv-id] (get all-links inv-id))
+        (map (fn [ev] (get (get ev "payload") "invoice_id"))
+             (filter (fn [e] (= (get e "type") "contract_invoice_linked")) evs))))))
+
+; ── Invoice의 linked contract (1:1, max) ──────────────────
+; invoice_id → {contract_id, linked_at} or nil
+(defn invoice-link [invoice-id]
+  (let [evs (link-events-for-invoice invoice-id)
+        linked-ev (first (filter (fn [e] (= (get e "type") "contract_invoice_linked")) evs))
+        unlinked-ev (last (filter (fn [e] (= (get e "type") "contract_invoice_unlinked")) evs))]
+    (if (or (nil? linked-ev) (not (nil? unlinked-ev)))
+      nil
+      (get (get linked-ev "payload") "contract_id"))))
+
+(defn invoice-linked-contract-id [invoice-id]
+  (invoice-link invoice-id))
+
+; ── Contract이 linked invoices 보유 여부 ──────────────────
+(defn contract-has-linked-invoices? [contract-id]
+  (> (length (contract-links contract-id)) 0))
+
+; ── Link 이미 존재 여부 (I2: 중복 차단) ────────────────────
+(defn link-exists? [contract-id invoice-id]
+  (let [inv-link (invoice-link invoice-id)]
+    (if (nil? inv-link)
+      false
+      (= inv-link contract-id))))
+
+; ── Unlink idempotent 검사 (I5: 이미 unlink된 link 재unlink) ──
+; invoice이 unlinked 상태면 true (no-op 가능)
+(defn link-already-unlinked? [contract-id invoice-id]
+  (let [evs (link-events-for-invoice invoice-id)
+        all-links (reduce
+                    (fn [acc ev]
+                      (let [type (get ev "type")
+                            payload (get ev "payload")
+                            c-id (get payload "contract_id")]
+                        (if (and (= type "contract_invoice_unlinked") (= c-id contract-id))
+                          (assoc acc "has_unlink" true)
+                          acc)))
+                    {}
+                    evs)]
+    (get all-links "has_unlink")))
+
+; ── 여러 contract에 동시 link 방지 (I4) ──────────────────────
+; invoice_id → 현재 linked contract 조회
+(defn invoice-current-contract [invoice-id]
+  (invoice-link invoice-id))
+
+; ── Link 정보 조회 (audit) ─────────────────────────────────
+(defn get-link-detail [contract-id invoice-id]
+  (let [evs (link-events-for-invoice invoice-id)
+        matched (filter
+                  (fn [e]
+                    (= (get (get e "payload") "contract_id") contract-id))
+                  evs)]
+    (if (= (length matched) 0)
+      nil
+      (let [linked-ev (first (filter (fn [e] (= (get e "type") "contract_invoice_linked")) matched))
+            unlinked-ev (last (filter (fn [e] (= (get e "type") "contract_invoice_unlinked")) matched))]
+        {"contract_id" contract-id
+         "invoice_id" invoice-id
+         "linked_at" (if (nil? linked-ev) nil (get (get linked-ev "payload") "linked_at"))
+         "unlinked_at" (if (nil? unlinked-ev) nil (get (get unlinked-ev "payload") "unlinked_at"))
+         "status" (if (nil? unlinked-ev) "linked" "unlinked")}))))
+
+; ── Contract이 cancelled인지 확인 (I1: cancelled contract link 금지) ──
+; contract-state.fl 에서 제공하는 project-contract 사용
+; (defn contract-is-cancelled? [contract-id]
+;   (let [c (project-contract contract-id)]
+;     (= (get c "status") "cancelled")))

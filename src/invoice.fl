@@ -75,6 +75,12 @@
 (defn handle-new-form [req]
   (let [today (date-format (now-ms) "yyyy-MM-dd")
         plus30 (date-format (date-add (now-ms) "days" 30) "yyyy-MM-dd")
+        contracts (all-contracts)
+        contract-options (reduce
+                           (fn [acc c]
+                             (str acc "<option value=\"" (esc (get c "id")) "\">" (esc (get c "title")) " (" (esc (get c "party_b")) ")</option>"))
+                           ""
+                           contracts)
         body (str
           "<h1>새 송장</h1>"
           "<form method=\"POST\" action=\"/invoices\">"
@@ -82,6 +88,10 @@
             "<label>금액 (KRW, 정수)<input name=\"amount_krw\" type=\"number\" min=\"1\" required></label>"
             "<label>발행일<input name=\"issued_at\" type=\"date\" value=\"" today "\" required></label>"
             "<label>만기일<input name=\"due_at\" type=\"date\" value=\"" plus30 "\" required></label>"
+            "<label>계약 선택 (선택)<select name=\"contract_id\">"
+              "<option value=\"\">-- 계약 없음 --</option>"
+              contract-options
+            "</select></label>"
             "<label>메모 (선택)<textarea name=\"memo\" rows=\"3\"></textarea></label>"
             "<button type=\"submit\">송장 생성</button>"
           "</form>")]

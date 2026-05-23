@@ -1,0 +1,204 @@
+; soloflow contract-invoice-link-test.fl — v1.1-C 계약↔송장 연결 검증
+; 실행: SOLOFLOW_CONTRACT_INVOICE_LINK_EVENTS_PATH=tests/data/contract-invoice-link-test.jsonl node /root/kim/freelang-v11/bootstrap.js run tests/contract-invoice-link-test.fl
+
+(load "src/render.fl")
+(load "src/contract-state.fl")
+(load "src/state.fl")
+(load "src/contract-invoice-link-state.fl")
+
+(println "═══ soloflow v1.1-C contract-invoice-link tests ═══")
+(println "")
+
+(define PASS-COUNT (atom 0))
+(define FAIL-COUNT (atom 0))
+
+(defn check [label actual expected]
+  (if (= actual expected)
+    (do (swap! PASS-COUNT + 1)
+        (println (str "  ✓ " label)))
+    (do (swap! FAIL-COUNT + 1)
+        (println (str "  ✗ " label))
+        (println (str "      expected: " expected))
+        (println (str "      actual:   " actual)))))
+
+(println (str "LINK-EVENTS-PATH = " CONTRACT-INVOICE-LINK-EVENTS-PATH))
+(if (not (str-includes CONTRACT-INVOICE-LINK-EVENTS-PATH "link-test"))
+  (do (println "❌ SOLOFLOW_CONTRACT_INVOICE_LINK_EVENTS_PATH 미설정")
+      (throw "env var missing"))
+  nil)
+
+(if (file-exists CONTRACT-INVOICE-LINK-EVENTS-PATH) (file-delete CONTRACT-INVOICE-LINK-EVENTS-PATH) nil)
+
+(defn write-ev [ts type payload]
+  (file-append CONTRACT-INVOICE-LINK-EVENTS-PATH
+    (str (json-stringify {"ts" ts "type" type "payload" payload}) "\n")))
+
+(define NOW (now-ms))
+
+; ── test 1: contract-links 빈 목록 (초기) ────────────────────
+(println "[1] contract-links 빈 목록 (초기)")
+(let [links (contract-links "ctr-001")]
+  (check "초기 links 0개" (length links) 0))
+
+(println "")
+
+; ── test 2: contract_invoice_linked 이벤트 저장 + 조회 ────────
+(println "[2] contract_invoice_linked 이벤트 저장 + 조회")
+(write-ev NOW "contract_invoice_linked"
+  {"contract_id" "ctr-001"
+   "invoice_id" "inv-001"
+   "linked_at" NOW})
+
+(let [links (contract-links "ctr-001")]
+  (check "linked 후 links 1개" (length links) 1)
+  (if (> (length links) 0)
+    (check "invoice_id 일치" (get (get links 0) "invoice_id") "inv-001")))
+
+(println "")
+
+; ── test 3: invoice-link 조회 (linked) ───────────────────────
+(println "[3] invoice-link 조회 (linked)")
+(let [contract-id (invoice-link "inv-001")]
+  (check "invoice-link = ctr-001" contract-id "ctr-001"))
+
+(println "")
+
+; ── test 4: contract_invoice_unlinked 이벤트 → 삭제 ─────────
+(println "[4] contract_invoice_unlinked 이벤트 → 삭제")
+(write-ev (+ NOW 1000) "contract_invoice_unlinked"
+  {"contract_id" "ctr-001"
+   "invoice_id" "inv-001"
+   "unlinked_at" (+ NOW 1000)})
+
+(let [links (contract-links "ctr-001")
+      inv-link (invoice-link "inv-001")]
+  (check "unlink 후 links 0개" (length links) 0)
+  (check "unlink 후 invoice-link nil" (nil? inv-link) true))
+
+(println "")
+
+; ── test 5: duplicate link 시도 → I2 위반 ──────────────────
+(println "[5] duplicate link 시도 → I2 위반")
+(write-ev (+ NOW 2000) "contract_invoice_linked"
+  {"contract_id" "ctr-001"
+   "invoice_id" "inv-002"
+   "linked_at" (+ NOW 2000)})
+
+(let [exists (link-exists? "ctr-001" "inv-002")]
+  (check "link-exists? = true" exists true)
+
+  ; 같은 link 다시 시도하면 감지
+  (let [exists2 (link-exists? "ctr-001" "inv-002")]
+    (check "duplicate link 감지" exists2 true)))
+
+(println "")
+
+; ── test 6: invoice 여러 contract 동시 link 방지 (I4) ──────
+(println "[6] invoice 여러 contract link 방지 (I4)")
+(write-ev (+ NOW 3000) "contract_invoice_linked"
+  {"contract_id" "ctr-002"
+   "invoice_id" "inv-003"
+   "linked_at" (+ NOW 3000)})
+
+(let [inv-contract (invoice-link "inv-003")]
+  (check "inv-003 → ctr-002 link" inv-contract "ctr-002")
+
+  ; 같은 invoice를 ctr-001과 link 시도하면 실패해야 함 (I4)
+  ; link-exists?는 (invoice-link가 현재 contract_id와 다르면) false
+  (let [duplicate-attempt (and (not (nil? (invoice-link "inv-003"))) (not (= (invoice-link "inv-003") "ctr-001")))]
+    (check "I4: invoice 다중 link 방지 감지" duplicate-attempt true)))
+
+(println "")
+
+; ── test 7: unlink idempotent (I5) ───────────────────────────
+(println "[7] unlink idempotent (I5)")
+(let [already-unlinked (link-already-unlinked? "ctr-001" "inv-001")]
+  (check "I5: unlink된 link 재unlink 감지" already-unlinked true))
+
+(println "")
+
+; ── test 8: get-link-detail 조회 ──────────────────────────────
+(println "[8] get-link-detail 조회")
+(let [detail (get-link-detail "ctr-001" "inv-002")]
+  (check "detail 존재" (nil? detail) false)
+  (check "contract_id 일치" (get detail "contract_id") "ctr-001")
+  (check "invoice_id 일치" (get detail "invoice_id") "inv-002")
+  (check "status = linked" (get detail "status") "linked"))
+
+(println "")
+
+; ── test 9: unlinked 상태 detail ──────────────────────────────
+(println "[9] unlinked 상태 detail")
+(let [detail (get-link-detail "ctr-001" "inv-001")]
+  (check "unlinked detail 존재" (nil? detail) false)
+  (check "status = unlinked" (get detail "status") "unlinked")
+  (check "unlinked_at 있음" (nil? (get detail "unlinked_at")) false))
+
+(println "")
+
+; ── test 10: contract-has-linked-invoices? ───────────────────
+(println "[10] contract-has-linked-invoices?")
+(check "ctr-001 has linked" (contract-has-linked-invoices? "ctr-001") true)
+(check "ctr-002 has linked" (contract-has-linked-invoices? "ctr-002") true)
+(check "ctr-999 has linked" (contract-has-linked-invoices? "ctr-999") false)
+
+(println "")
+
+; ── test 11: invoice-linked-contract-id ──────────────────────
+(println "[11] invoice-linked-contract-id")
+(let [cid (invoice-linked-contract-id "inv-003")]
+  (check "inv-003 contract_id" cid "ctr-002"))
+
+(let [cid-nil (invoice-linked-contract-id "inv-001")]
+  (check "inv-001 contract_id (unlinked)" (nil? cid-nil) true))
+
+(println "")
+
+; ── test 12: multiple invoices link ──────────────────────────
+(println "[12] multiple invoices link")
+(write-ev (+ NOW 4000) "contract_invoice_linked"
+  {"contract_id" "ctr-002"
+   "invoice_id" "inv-004"
+   "linked_at" (+ NOW 4000)})
+
+(write-ev (+ NOW 5000) "contract_invoice_linked"
+  {"contract_id" "ctr-002"
+   "invoice_id" "inv-005"
+   "linked_at" (+ NOW 5000)})
+
+(let [links (contract-links "ctr-002")]
+  (check "ctr-002 links 3개 (inv-003, inv-004, inv-005)" (length links) 3))
+
+(println "")
+
+; ── test 13: unlink audit trail ──────────────────────────────
+(println "[13] unlink audit trail")
+(write-ev (+ NOW 6000) "contract_invoice_unlinked"
+  {"contract_id" "ctr-002"
+   "invoice_id" "inv-004"
+   "unlinked_at" (+ NOW 6000)})
+
+(let [links (contract-links "ctr-002")
+      detail-unlink (get-link-detail "ctr-002" "inv-004")]
+  (check "unlink 후 links 2개" (length links) 2)
+  (check "unlink detail 기록 남음" (nil? detail-unlink) false)
+  (check "unlink detail.status" (get detail-unlink "status") "unlinked"))
+
+(println "")
+
+; ── test 14: link-events-for-contract / invoice ──────────────
+(println "[14] link-events-for-contract / invoice")
+(let [contract-evs (link-events-for-contract "ctr-002")
+      invoice-evs (link-events-for-invoice "inv-004")]
+  (check "contract-evs >= 4" (>= (length contract-evs) 4) true)
+  (check "invoice-evs >= 1" (>= (length invoice-evs) 1) true))
+
+(println "")
+
+(println "═══════════════════════════════════════════")
+(println (str "결과: " @PASS-COUNT " PASS / " @FAIL-COUNT " FAIL"))
+(println "═══════════════════════════════════════════")
+
+(if (> @FAIL-COUNT 0)
+  (throw (str @FAIL-COUNT " test(s) failed"))
+  (println "✅ 모든 테스트 통과"))

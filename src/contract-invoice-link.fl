@@ -1,0 +1,62 @@
+; soloflow contract-invoice-link.fl — v1.1-C 계약↔송장 연결 라우트
+; POST /contracts/:cid/invoice/:iid/link
+; POST /contracts/:cid/invoice/:iid/unlink
+
+; ── POST /contracts/:cid/invoice/:iid/link : link 생성 ──────
+(defn handle-contract-invoice-link [req]
+  (let [cid (get (get req "params") "cid")
+        iid (get (get req "params") "iid")
+        contract (project-contract cid)
+        invoice (project-invoice iid)]
+    (cond
+      (nil? contract)
+      (server-status 404 "계약을 찾을 수 없습니다")
+
+      (nil? invoice)
+      (server-status 404 "송장을 찾을 수 없습니다")
+
+      ; I1: cancelled contract link 금지
+      (= (get contract "status") "cancelled")
+      (server-status 400 "취소된 계약은 송장과 연결할 수 없습니다")
+
+      ; I2: 이미 링크되어 있으면 금지
+      (link-exists? cid iid)
+      (server-status 409 "이미 연결된 계약과 송장입니다")
+
+      ; I4: invoice가 다른 contract에 이미 linked 면 금지
+      (let [inv-contract (invoice-link iid)]
+        (and (not (nil? inv-contract)) (not (= inv-contract cid))))
+      (server-status 409 (str "이 송장은 이미 다른 계약(" (invoice-link iid) ")과 연결되어 있습니다"))
+
+      :else
+      (do
+        (append-link-event "contract_invoice_linked"
+          {"contract_id" cid
+           "invoice_id" iid
+           "linked_at" (now-ms)})
+        (server-redirect (str "/contracts/" cid))))))
+
+; ── POST /contracts/:cid/invoice/:iid/unlink : link 제거 ────
+(defn handle-contract-invoice-unlink [req]
+  (let [cid (get (get req "params") "cid")
+        iid (get (get req "params") "iid")
+        contract (project-contract cid)
+        link-detail (get-link-detail cid iid)]
+    (cond
+      (nil? contract)
+      (server-status 404 "계약을 찾을 수 없습니다")
+
+      (nil? link-detail)
+      (server-status 404 "연결된 송장을 찾을 수 없습니다")
+
+      ; I5: 이미 unlink된 link를 다시 unlink 시도 → idempotent (200 OK, no-op)
+      (= (get link-detail "status") "unlinked")
+      (server-redirect (str "/contracts/" cid))
+
+      :else
+      (do
+        (append-link-event "contract_invoice_unlinked"
+          {"contract_id" cid
+           "invoice_id" iid
+           "unlinked_at" (now-ms)})
+        (server-redirect (str "/contracts/" cid))))))

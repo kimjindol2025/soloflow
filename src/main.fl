@@ -7,6 +7,8 @@
 (load "src/contract-template.fl")
 (load "src/contract-state.fl")
 (load "src/contract.fl")
+(load "src/contract-invoice-link-state.fl")
+(load "src/contract-invoice-link.fl")
 (load "src/template-state.fl")
 (load "src/template.fl")
 (load "src/cron.fl")
@@ -17,7 +19,7 @@
 (load "src/delivery-state.fl")
 (load "src/delivery.fl")
 
-; ── 라우트 등록 (43개: invoice 8 + contract 6 + template 5 + schedule 8 + focus 11 + delivery 5) ──
+; ── 라우트 등록 (45개: invoice 8 + contract 6 + contract-invoice-link 2 + template 5 + schedule 8 + focus 11 + delivery 5) ──
 ; invoice 8 (M1.1: send/cancel 추가)
 (server-get  "/"                    "handle-index")
 (server-get  "/invoices"            "handle-invoices")
@@ -34,6 +36,9 @@
 (server-get  "/contracts/:id"        "handle-contract-detail")
 (server-post "/contracts/:id/sign"   "handle-contract-sign")
 (server-get  "/contracts/:id/print"  "handle-contract-print")
+; contract-invoice-link 2 (v1.1-C: 계약↔송장 연결)
+(server-post "/contracts/:cid/invoice/:iid/link"   "handle-contract-invoice-link")
+(server-post "/contracts/:cid/invoice/:iid/unlink" "handle-contract-invoice-unlink")
 ; template 5 (v1.1-B: multi-template CRUD)
 (server-get  "/template/list"        "handle-template-list")
 (server-post "/template/create"      "handle-template-create")

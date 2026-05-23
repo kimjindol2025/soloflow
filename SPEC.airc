@@ -12,7 +12,7 @@
     "not": "팀 협업 도구 아님 (단일 사용자 single-tenant). 회계 정산 SaaS 아님 (세무사 대체 X — 보조 데이터 제공만). 메신저·CRM 통합 허브 아님 (외부 SaaS API 흡수 금지). 모바일 native 앱 아님 v1 (순수 SSR 웹). 다국가 세무/통화 자동 변환 v1 미지원 (KRW 단일)"
   },
 
-  "hot": "v1.1-B",
+  "hot": "v1.1-C",
 
   "constitution": {
     "1": "AI 전용. 인간 가독성을 위한 구조 타협 금지",
@@ -800,6 +800,75 @@
       "verified": true,
       "verified_at": "2026-05-23",
       "verified_evidence": "template-test.fl 37/37 PASS (seed create + detail + body + updated versioning + archived filter + selected uniqueness + exists/archived bool + multi-template isolation + select-contract-template fallback + versioning multi-update + active-templates sort + events count + filter by id + nil detail + archived fallback). src/main.fl: 43 routes (38 existing + 5 template). contract form + contract-state + render nav updated. E2E server confirmed.",
+      "next": ["task-012"]
+    },
+
+    "task-012": {
+      "t": "task",
+      "v": "v1.1-C 계약↔송장 연결 — contract-invoice 양방향 참조 (bounded-context)",
+      "spec": {
+        "domain_events": {
+          "contract_invoice_linked": "{contract_id, invoice_id, linked_at}",
+          "contract_invoice_unlinked": "{contract_id, invoice_id, unlinked_at}"
+        },
+        "storage": {
+          "underlying": "JSONL — data/contract-invoice-link-events.jsonl (meta aggregate, 분리)",
+          "bounded_context": "contract ↔ invoice 매핑만 (lifecycle 독립)"
+        },
+        "state_projection": {
+          "contract_links": "contract_id → [{invoice_id, linked_at, unlinked_at}...]",
+          "contract_has_linked_invoices?": "bool",
+          "invoice_link": "invoice_id → contract_id or nil",
+          "invoice_linked_contract_id": "alias",
+          "link_exists?": "duplicate 차단 (I2)",
+          "link_already_unlinked?": "idempotent (I5)",
+          "get_link_detail": "audit trail 조회"
+        },
+        "ssr_routes": {
+          "POST /contracts/:cid/invoice/:iid/link": "contract_invoice_linked (I1-I4 검증)",
+          "POST /contracts/:cid/invoice/:iid/unlink": "contract_invoice_unlinked (I5 idempotent)"
+        }
+      },
+      "scope_in": [
+        "src/contract-invoice-link-state.fl: 2 events + 8 projection (contract-links/has-linked/invoice-link/exists/idempotent/detail)",
+        "src/contract-invoice-link.fl: 2 routes + invariant (I1-I5)",
+        "src/contract.fl: render-linked-invoices 섹션 추가 (contract detail)",
+        "src/invoice.fl: '계약 선택 (optional)' dropdown 추가 (new form)",
+        "src/main.fl: link-state/link 로드 + 2 routes (45개 총)",
+        "tests/contract-invoice-link-test.fl: 29 검증 (12+ 목표 초과)"
+      ],
+      "scope_out_v1.1": [
+        "자동 sync (contract 상태 변경 → invoice 자동 변경)",
+        "양방향 lifecycle coupling (contract ← 직접 → invoice status)",
+        "cascade delete (contract 삭제 시 invoice 감시는 구현, 삭제는 금지)",
+        "혼합 청구 (1 invoice ← N contracts) — v2 후보"
+      ],
+      "invariant": [
+        "I1: cancelled contract link 금지 (400)",
+        "I2: duplicate link 차단 (409)",
+        "I3: contract 삭제 보호 (audit-only, 불가능)",
+        "I4: invoice 1개는 동시에 2개 contract 연결 금지 (409)",
+        "I5: unlink idempotent (이미 unlink된 link 재unlink = no-op)"
+      ],
+      "entry": [
+        "src/contract-invoice-link-state.fl",
+        "src/contract-invoice-link.fl",
+        "src/contract.fl",
+        "src/invoice.fl",
+        "src/main.fl",
+        "tests/contract-invoice-link-test.fl"
+      ],
+      "check": [
+        "contract-invoice-link-test.fl 29/29 PASS (all invariants + projections + audit)",
+        "live: POST /contracts/:cid/invoice/:iid/link",
+        "live: POST /contracts/:cid/invoice/:iid/unlink",
+        "live: GET /contracts/:id '관련 송장' 섹션 렌더링",
+        "live: GET /invoices/new '계약 선택' dropdown",
+        "live: I1-I5 모든 invariant 검증 (400/409 error cases)"
+      ],
+      "verified": true,
+      "verified_at": "2026-05-23",
+      "verified_evidence": "contract-invoice-link-test.fl 29/29 PASS (contract-links empty/link/unlink + invoice-link linked/unlinked + duplicate prevention I2 + multi-contract prevention I4 + idempotent I5 + detail audit + has-linked-invoices bool + multi-links + unlink trail + event filtering). src/main.fl: 45 routes (43 existing + 2 link). contract detail + invoice form updated. Bounded-context separation maintained (independent lifecycle). Projection deterministic. Audit replay valid.",
       "next": []
     },
 

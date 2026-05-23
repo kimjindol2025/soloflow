@@ -186,8 +186,36 @@
         "</table>"
       "</div>"
       (render-signature-section c)
+      (render-linked-invoices (get c "id"))
       (render-reminder-timeline reminders)
       "<p><a href=\"/contracts/" (esc (get c "id")) "/print\" target=\"_blank\">🖨 인쇄용 보기</a></p>")))
+
+; ── 관련 송장 섹션 ──────────────────────────────────────────
+(defn render-linked-invoices [contract-id]
+  (let [links (contract-links contract-id)]
+    (if (= (length links) 0)
+      "<h2>관련 송장</h2><p class=\"muted\">연결된 송장이 없습니다.</p>"
+      (str
+        "<h2>관련 송장 (" (str (length links)) ")</h2>"
+        "<table><thead><tr><th>송장 ID</th><th>금액</th><th>상태</th><th>액션</th></tr></thead><tbody>"
+        (reduce
+          (fn [acc link]
+            (let [inv-id (get link "invoice_id")
+                  inv (project-invoice inv-id)]
+              (if (nil? inv)
+                acc
+                (str acc
+                  "<tr>"
+                  "<td><a href=\"/invoices/" (esc inv-id) "\">" (esc inv-id) "</a></td>"
+                  "<td>" (money (get inv "amount_krw")) "</td>"
+                  "<td>" (status-badge (get inv "status")) "</td>"
+                  "<td><form method=\"POST\" action=\"/contracts/" (esc contract-id) "/invoice/" (esc inv-id) "/unlink\" style=\"display:inline\">"
+                    "<button type=\"submit\" style=\"background:#999\">연결 해제</button>"
+                  "</form></td>"
+                  "</tr>"))))
+          ""
+          links)
+        "</tbody></table>"))))
 
 (defn render-signature-section [c]
   (let [sig (get c "signature")]
