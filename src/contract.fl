@@ -8,6 +8,40 @@
     (= st "expired")  "<span class=\"badge b-overdue\">만료</span>"
     :else             "<span class=\"badge b-open\">—</span>"))
 
+; ── expiring reminder 배지 (threshold 별 색상) ───────────────
+(defn render-expiring-badges [reminders]
+  (let [has-14d (> (length (filter (fn [r] (= (get r "threshold_days") 14)) reminders)) 0)
+        has-7d  (> (length (filter (fn [r] (= (get r "threshold_days") 7)) reminders)) 0)
+        has-1d  (> (length (filter (fn [r] (= (get r "threshold_days") 1)) reminders)) 0)]
+    (str
+      (if has-1d
+        "<div class=\"card\" style=\"border-color:#dc3545\"><strong style=\"color:#dc3545\">🔴 1일 이내</strong></div>"
+        "")
+      (if has-7d
+        "<div class=\"card\" style=\"border-color:#fd7e14\"><strong style=\"color:#fd7e14\">🟠 7일 이내</strong></div>"
+        "")
+      (if has-14d
+        "<div class=\"card\" style=\"border-color:#ffc107\"><strong style=\"color:#856404\">🟡 14일 이내</strong></div>"
+        ""))))
+
+; ── expiring reminder timeline (audit trail) ──────────────────
+(defn render-reminder-timeline [reminders]
+  (if (= (length reminders) 0)
+    ""
+    (str
+      "<h2>만료 알림 기록</h2>"
+      "<table><thead><tr><th>임박일</th><th>기준</th><th>days</th></tr></thead><tbody>"
+      (reduce
+        (fn [acc r]
+          (str acc
+            "<tr>"
+            "<td>" (fmt-date (get r "expiring_at")) "</td>"
+            "<td>" (str (get r "threshold_days")) "일 기준</td>"
+            "<td>" (str (get r "days_until_expire")) "일</td>"
+            "</tr>"))
+        "" reminders)
+      "</tbody></table>")))
+
 ; ── GET /contracts : 전체 리스트 + 필터 ────────────────────
 (defn handle-contracts-list [req]
   (let [filter-q (get (get req "query") "status")
@@ -116,25 +150,28 @@
       (server-html (layout (str "계약 · " (str-slice (get c "title") 0 40)) (render-contract-detail c))))))
 
 (defn render-contract-detail [c]
-  (str
-    "<h1>" (esc (get c "title")) " " (contract-badge (get c "status")) "</h1>"
-    (if (get c "expiring_soon")
-      "<div class=\"card\" style=\"border-color:#dc3545\"><strong style=\"color:#dc3545\">⚠ 만료 임박 (14일 이내)</strong></div>"
-      "")
-    "<div class=\"card\">"
-      "<table>"
-      "<tr><th>계약 ID</th><td><code>" (esc (get c "id")) "</code></td></tr>"
-      "<tr><th>갑 (발주자)</th><td>" (esc (get c "party_a")) "</td></tr>"
-      "<tr><th>을 (수행자)</th><td>" (esc (get c "party_b")) "</td></tr>"
-      "<tr><th>용역 범위</th><td>" (esc (get c "scope")) "</td></tr>"
-      "<tr><th>기간</th><td>" (fmt-date (get c "period_start")) " ~ " (fmt-date (get c "period_end")) "</td></tr>"
-      "<tr><th>대금</th><td>" (money (get c "amount_krw")) " (부가세 " (if (get c "vat_included") "포함" "별도") ")</td></tr>"
-      "<tr><th>지급 조건</th><td>" (esc (get c "payment_terms")) "</td></tr>"
-      "<tr><th>기타</th><td>" (esc (get c "memo")) "</td></tr>"
-      "</table>"
-    "</div>"
-    (render-signature-section c)
-    "<p><a href=\"/contracts/" (esc (get c "id")) "/print\" target=\"_blank\">🖨 인쇄용 보기</a></p>"))
+  (let [reminders (expiring-reminders (get c "id"))]
+    (str
+      "<h1>" (esc (get c "title")) " " (contract-badge (get c "status")) "</h1>"
+      (render-expiring-badges reminders)
+      (if (get c "expiring_soon")
+        "<div class=\"card\" style=\"border-color:#dc3545\"><strong style=\"color:#dc3545\">⚠ 만료 임박 (14일 이내)</strong></div>"
+        "")
+      "<div class=\"card\">"
+        "<table>"
+        "<tr><th>계약 ID</th><td><code>" (esc (get c "id")) "</code></td></tr>"
+        "<tr><th>갑 (발주자)</th><td>" (esc (get c "party_a")) "</td></tr>"
+        "<tr><th>을 (수행자)</th><td>" (esc (get c "party_b")) "</td></tr>"
+        "<tr><th>용역 범위</th><td>" (esc (get c "scope")) "</td></tr>"
+        "<tr><th>기간</th><td>" (fmt-date (get c "period_start")) " ~ " (fmt-date (get c "period_end")) "</td></tr>"
+        "<tr><th>대금</th><td>" (money (get c "amount_krw")) " (부가세 " (if (get c "vat_included") "포함" "별도") ")</td></tr>"
+        "<tr><th>지급 조건</th><td>" (esc (get c "payment_terms")) "</td></tr>"
+        "<tr><th>기타</th><td>" (esc (get c "memo")) "</td></tr>"
+        "</table>"
+      "</div>"
+      (render-signature-section c)
+      (render-reminder-timeline reminders)
+      "<p><a href=\"/contracts/" (esc (get c "id")) "/print\" target=\"_blank\">🖨 인쇄용 보기</a></p>")))
 
 (defn render-signature-section [c]
   (let [sig (get c "signature")]

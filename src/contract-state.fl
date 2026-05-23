@@ -49,15 +49,20 @@
 ; ── 단일 계약 projection ───────────────────────────────────
 (defn project-contract [id]
   (let [evs (contract-events-for-id id)
-        created-list (filter (fn [e] (= (get e "type") "contract.created")) evs)
-        signed-list  (filter (fn [e] (= (get e "type") "contract.signed")) evs)]
+        created-list  (filter (fn [e] (= (get e "type") "contract.created")) evs)
+        signed-list   (filter (fn [e] (= (get e "type") "contract.signed")) evs)
+        cancelled-list (filter (fn [e] (= (get e "type") "contract.cancelled")) evs)]
     (if (= (length created-list) 0)
       nil
       (let [c (get (get created-list 0) "payload")
             created-ts (get (get created-list 0) "ts")
             signed (if (> (length signed-list) 0)
                      (get (get signed-list 0) "payload") nil)
-            status (compute-contract-status signed (get c "period_end"))
+            cancelled (if (> (length cancelled-list) 0)
+                       (get (get cancelled-list 0) "payload") nil)
+            status (if (not (nil? cancelled))
+                     "cancelled"
+                     (compute-contract-status signed (get c "period_end")))
             signature (if (not (nil? signed))
                         {"signer_name" (get signed "signer_name")
                          "signer_role" (get signed "signer_role")
@@ -78,7 +83,7 @@
          "created_at"    created-ts
          "status"        status
          "signature"     signature
-         "expiring_soon" (contract-expiring-soon? status (get c "period_end"))}))))
+         "expiring_soon" (and (not (nil? signed)) (contract-expiring-soon? status (get c "period_end")))}))))
 
 ; ── 전체 계약 리스트 projection ────────────────────────────
 ; 주의: list-contracts 는 v11 빌트인 (effect contract 시스템). all-contracts 로 회피
@@ -91,6 +96,31 @@
 ; ── 만료 임박 계약 ─────────────────────────────────────────
 (defn expiring-soon-contracts []
   (filter (fn [c] (get c "expiring_soon")) (all-contracts)))
+
+; ── 만료 상태 판정 (projection-only, cron 제외) ────────────
+(defn contract-expired? [period-end]
+  (and (not (nil? period-end)) (< period-end (now-ms))))
+
+; ── contract.expiring 이벤트 기록 (cron reminder audit) ────
+(defn append-contract-expiring-event [id days-until threshold]
+  (append-contract-event "contract.expiring"
+    {"id" id
+     "expiring_at" (now-ms)
+     "days_until_expire" days-until
+     "threshold_days" threshold
+     "triggered_by_cron" true}))
+
+; ── 특정 contract 의 최근 contract.expiring 이벤트들 ──────
+(defn expiring-reminders [id]
+  (let [evs (contract-events-for-id id)
+        reminders (filter (fn [e] (= (get e "type") "contract.expiring")) evs)]
+    (map (fn [r] (get r "payload")) reminders)))
+
+; ── 특정 contract + threshold 의 최근 expiring 이벤트 확인 ──
+(defn has-expiring-reminder? [id threshold-days]
+  (let [reminders (expiring-reminders id)
+        match (filter (fn [r] (= (get r "threshold_days") threshold-days)) reminders)]
+    (> (length match) 0)))
 
 ; ── ID 생성 ─────────────────────────────────────────────────
 (defn make-contract-id []

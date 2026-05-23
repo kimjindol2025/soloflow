@@ -7,6 +7,7 @@
 (load "src/contract-template.fl")
 (load "src/contract-state.fl")
 (load "src/contract.fl")
+(load "src/cron.fl")
 
 ; ── 라우트 등록 (14개: invoice 8 + contract 6) ─────────────
 ; invoice 8 (M1.1: send/cancel 추가)

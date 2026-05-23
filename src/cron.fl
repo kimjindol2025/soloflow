@@ -1,0 +1,45 @@
+; soloflow cron.fl — M2.1 contract expiring reminder (daily cron)
+; idempotent duplicate collapse (same contract + same threshold → 1회만)
+
+; ── days until expire (ms → days) ──────────────────────────
+; 주의: floor 연산으로 14d 경계값 handling. period_end 당일 = 0일 (not 1)
+(defn days-until-expire [period-end]
+  (let [now (now-ms)
+        diff (- period-end now)
+        days-ms 86400000]
+    (if (< diff 0)
+      -1  ; expired
+      (/ diff days-ms))))
+
+; ── threshold match (14d/7d/1d): 0 <= days-until <= threshold ──
+(defn should-trigger-threshold? [days-until threshold]
+  (and (>= days-until 0) (<= days-until threshold)))
+
+; ── scan & remind: active contract 스캔 → expiring 이벤트 ──
+(defn scan-expiring-contracts []
+  (let [all (all-contracts)
+        active (filter (fn [c] (= (get c "status") "active")) all)]
+    (reduce
+      (fn [acc contract]
+        (let [id (get contract "id")
+              period-end (get contract "period_end")
+              days (days-until-expire period-end)]
+          (do
+            ; 14d threshold
+            (if (and (should-trigger-threshold? days 14)
+                     (not (has-expiring-reminder? id 14)))
+              (append-contract-expiring-event id days 14)
+              nil)
+            ; 7d threshold
+            (if (and (should-trigger-threshold? days 7)
+                     (not (has-expiring-reminder? id 7)))
+              (append-contract-expiring-event id days 7)
+              nil)
+            ; 1d threshold
+            (if (and (should-trigger-threshold? days 1)
+                     (not (has-expiring-reminder? id 1)))
+              (append-contract-expiring-event id days 1)
+              nil)
+            (+ acc 1))))
+      0
+      active)))

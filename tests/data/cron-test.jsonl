@@ -1,0 +1,11 @@
+{"ts":1776916270212,"type":"contract.created","payload":{"id":"ctr-active-14d","title":"계약 A","party_a":"갑사","party_b":"을사","scope":"범위","period_start":1776916270212,"period_end":1780717870212,"amount_krw":1000000,"vat_included":false,"payment_terms":"완료 후","memo":""}}
+{"ts":1777780270212,"type":"contract.signed","payload":{"id":"ctr-active-14d","signer_name":"홍길동","signer_role":"을","signed_at":1777780270212,"note":""}}
+{"ts":1776916270212,"type":"contract.created","payload":{"id":"ctr-active-1d","title":"계약 B","party_a":"병사","party_b":"정사","scope":"범위","period_start":1776916270212,"period_end":1779594670212,"amount_krw":2000000,"vat_included":true,"payment_terms":"선불","memo":""}}
+{"ts":1777780270212,"type":"contract.signed","payload":{"id":"ctr-active-1d","signer_name":"이순신","signer_role":"을","signed_at":1777780270212,"note":""}}
+{"ts":1778644270212,"type":"contract.created","payload":{"id":"ctr-cancelled","title":"계약 C (취소됨)","party_a":"경사","party_b":"민사","scope":"범위","period_start":1778644270212,"period_end":1780372270212,"amount_krw":3000000,"vat_included":false,"payment_terms":"분할","memo":""}}
+{"ts":1779076270212,"type":"contract.signed","payload":{"id":"ctr-cancelled","signer_name":"김정훈","signer_role":"을","signed_at":1779076270212,"note":""}}
+{"ts":1779335470212,"type":"contract.cancelled","payload":{"id":"ctr-cancelled","cancelled_at":1779335470212,"reason":"클라이언트 요청"}}
+{"ts":1779508270329,"type":"contract.expiring","payload":{"id":"ctr-active-14d","expiring_at":1779508270329,"days_until_expire":13.999998680555555,"threshold_days":14,"triggered_by_cron":true}}
+{"ts":1779508270334,"type":"contract.expiring","payload":{"id":"ctr-active-1d","expiring_at":1779508270334,"days_until_expire":0.9999986342592593,"threshold_days":14,"triggered_by_cron":true}}
+{"ts":1779508270339,"type":"contract.expiring","payload":{"id":"ctr-active-1d","expiring_at":1779508270339,"days_until_expire":0.9999986342592593,"threshold_days":7,"triggered_by_cron":true}}
+{"ts":1779508270343,"type":"contract.expiring","payload":{"id":"ctr-active-1d","expiring_at":1779508270343,"days_until_expire":0.9999986342592593,"threshold_days":1,"triggered_by_cron":true}}

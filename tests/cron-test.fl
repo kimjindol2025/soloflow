@@ -1,0 +1,211 @@
+; soloflow cron-test.fl — task-007 M2.1 contract cron 검증
+; 실행: SOLOFLOW_CONTRACT_EVENTS_PATH=tests/data/cron-test.jsonl node /root/kim/freelang-v11/bootstrap.js run tests/cron-test.fl
+
+(load "src/render.fl")
+(load "src/state.fl")
+(load "src/contract-state.fl")
+(load "src/cron.fl")
+
+(println "═══ soloflow task-007 cron tests ═══")
+(println "")
+
+(define PASS-COUNT (atom 0))
+(define FAIL-COUNT (atom 0))
+
+(defn check [label actual expected]
+  (if (= actual expected)
+    (do (swap! PASS-COUNT + 1)
+        (println (str "  ✓ " label)))
+    (do (swap! FAIL-COUNT + 1)
+        (println (str "  ✗ " label))
+        (println (str "      expected: " expected))
+        (println (str "      actual:   " actual)))))
+
+(println (str "CONTRACT-EVENTS-PATH = " CONTRACT-EVENTS-PATH))
+(if (not (str-includes CONTRACT-EVENTS-PATH "cron-test"))
+  (do (println "❌ SOLOFLOW_CONTRACT_EVENTS_PATH 미설정 (cron-test)")
+      (throw "env var missing"))
+  nil)
+
+(if (file-exists CONTRACT-EVENTS-PATH) (file-delete CONTRACT-EVENTS-PATH) nil)
+
+(defn write-ev [ts type payload]
+  (file-append CONTRACT-EVENTS-PATH
+    (str (json-stringify {"ts" ts "type" type "payload" payload}) "\n")))
+
+(define NOW (now-ms))
+(define D1 86400000)
+(define DAY-OFFSET (fn [n] (+ NOW (* D1 n))))
+
+; ── test 1: days-until-expire 계산 (float 반환) ─────────────
+(println "[1] days-until-expire 계산")
+
+
+; check: 6 < days-until-expire(...) <= 7
+(let [d7 (days-until-expire (DAY-OFFSET 7))]
+  (check "7일: 7 * D1 후 (6 < x <= 7)"
+         (and (> d7 6) (<= d7 7))
+         true))
+
+; check: 13 < days-until-expire(...) <= 14
+(let [d14 (days-until-expire (DAY-OFFSET 14))]
+  (check "14일: 14 * D1 후 (13 < x <= 14)"
+         (and (> d14 13) (<= d14 14))
+         true))
+
+(check "-1일: 과거 (expired)"
+       (days-until-expire (DAY-OFFSET -5))
+       -1)
+
+(println "")
+
+; ── test 2: should-trigger-threshold (범위 검사) ──────────
+(println "[2] should-trigger-threshold? (14d/7d/1d)")
+
+(check "14d: 14.0 ≤ threshold"
+       (should-trigger-threshold? 14.0 14)
+       true)
+
+(check "14d: 0.0 ≤ threshold"
+       (should-trigger-threshold? 0.0 14)
+       true)
+
+(check "14d: 14.5 > threshold"
+       (should-trigger-threshold? 14.5 14)
+       false)
+
+(check "7d: 7.0"
+       (should-trigger-threshold? 7.0 7)
+       true)
+
+(check "7d: 7.5 > threshold"
+       (should-trigger-threshold? 7.5 7)
+       false)
+
+(check "1d: 1.0"
+       (should-trigger-threshold? 1.0 1)
+       true)
+
+(check "1d: 0.5"
+       (should-trigger-threshold? 0.5 1)
+       true)
+
+(check "1d: 1.5 > threshold"
+       (should-trigger-threshold? 1.5 1)
+       false)
+
+(println "")
+
+; ── test 3: scan & duplicate collapse ────────────────────────
+(println "[3] scan-expiring-contracts (duplicate collapse + cancelled skip)")
+
+; fixture: active contract 14일 후 만료
+(write-ev (DAY-OFFSET -30) "contract.created"
+  {"id" "ctr-active-14d" "title" "계약 A" "party_a" "갑사" "party_b" "을사"
+   "scope" "범위" "period_start" (DAY-OFFSET -30) "period_end" (DAY-OFFSET 14)
+   "amount_krw" 1000000 "vat_included" false "payment_terms" "완료 후" "memo" ""})
+(write-ev (DAY-OFFSET -20) "contract.signed"
+  {"id" "ctr-active-14d" "signer_name" "홍길동" "signer_role" "을"
+   "signed_at" (DAY-OFFSET -20) "note" ""})
+
+; fixture: active contract 1일 후 만료
+(write-ev (DAY-OFFSET -30) "contract.created"
+  {"id" "ctr-active-1d" "title" "계약 B" "party_a" "병사" "party_b" "정사"
+   "scope" "범위" "period_start" (DAY-OFFSET -30) "period_end" (DAY-OFFSET 1)
+   "amount_krw" 2000000 "vat_included" true "payment_terms" "선불" "memo" ""})
+(write-ev (DAY-OFFSET -20) "contract.signed"
+  {"id" "ctr-active-1d" "signer_name" "이순신" "signer_role" "을"
+   "signed_at" (DAY-OFFSET -20) "note" ""})
+
+; fixture: cancelled contract (reminder 안 생김)
+(write-ev (DAY-OFFSET -10) "contract.created"
+  {"id" "ctr-cancelled" "title" "계약 C (취소됨)" "party_a" "경사" "party_b" "민사"
+   "scope" "범위" "period_start" (DAY-OFFSET -10) "period_end" (DAY-OFFSET 10)
+   "amount_krw" 3000000 "vat_included" false "payment_terms" "분할" "memo" ""})
+(write-ev (DAY-OFFSET -5) "contract.signed"
+  {"id" "ctr-cancelled" "signer_name" "김정훈" "signer_role" "을"
+   "signed_at" (DAY-OFFSET -5) "note" ""})
+(write-ev (DAY-OFFSET -2) "contract.cancelled"
+  {"id" "ctr-cancelled" "cancelled_at" (DAY-OFFSET -2) "reason" "클라이언트 요청"})
+
+; scan 1회 실행
+(define scan1-count (scan-expiring-contracts))
+(println (str "  scan 1회: " scan1-count " contract 처리"))
+
+; check: ctr-active-14d 에 14d reminder 생성됨
+(define reminders-14d (expiring-reminders "ctr-active-14d"))
+(check "ctr-active-14d: 14d reminder 생성됨"
+       (length (filter (fn [r] (= (get r "threshold_days") 14)) reminders-14d))
+       1)
+
+; check: ctr-active-1d 에 1d/7d/14d reminder 생성됨
+(define reminders-1d (expiring-reminders "ctr-active-1d"))
+(check "ctr-active-1d: 1d reminder 생성됨"
+       (length (filter (fn [r] (= (get r "threshold_days") 1)) reminders-1d))
+       1)
+(check "ctr-active-1d: 7d reminder 생성됨"
+       (length (filter (fn [r] (= (get r "threshold_days") 7)) reminders-1d))
+       1)
+(check "ctr-active-1d: 14d reminder 생성됨"
+       (length (filter (fn [r] (= (get r "threshold_days") 14)) reminders-1d))
+       1)
+
+; check: ctr-cancelled 에 reminder 없음
+(define reminders-cancelled (expiring-reminders "ctr-cancelled"))
+(check "ctr-cancelled: reminder 안 생김 (cancelled)"
+       (length reminders-cancelled)
+       0)
+
+(println "")
+
+; ── test 4: idempotent duplicate collapse ────────────────────
+(println "[4] idempotent duplicate collapse (scan 2회)")
+
+(define scan2-count (scan-expiring-contracts))
+(println (str "  scan 2회: " scan2-count " contract 처리"))
+
+; check: reminders 개수 변화 없음
+(define reminders-14d-v2 (expiring-reminders "ctr-active-14d"))
+(check "ctr-active-14d: reminder 1개 유지 (중복 안 함)"
+       (length (filter (fn [r] (= (get r "threshold_days") 14)) reminders-14d-v2))
+       1)
+
+(define reminders-1d-v2 (expiring-reminders "ctr-active-1d"))
+(check "ctr-active-1d: total 3개 유지 (1d/7d/14d)"
+       (length reminders-1d-v2)
+       3)
+
+(println "")
+
+; ── test 5: has-expiring-reminder? idempotent check ──────────
+(println "[5] has-expiring-reminder? (idempotent)")
+
+(check "ctr-active-14d: 14d threshold exist"
+       (has-expiring-reminder? "ctr-active-14d" 14)
+       true)
+
+(check "ctr-active-14d: 7d threshold not exist"
+       (has-expiring-reminder? "ctr-active-14d" 7)
+       false)
+
+(check "ctr-active-1d: 7d threshold exist"
+       (has-expiring-reminder? "ctr-active-1d" 7)
+       true)
+
+(check "ctr-active-1d: 1d threshold exist"
+       (has-expiring-reminder? "ctr-active-1d" 1)
+       true)
+
+(check "ctr-cancelled: no reminder"
+       (has-expiring-reminder? "ctr-cancelled" 14)
+       false)
+
+(println "")
+
+(println "═══════════════════════════════════════════")
+(println (str "결과: " @PASS-COUNT " PASS / " @FAIL-COUNT " FAIL"))
+(println "═══════════════════════════════════════════")
+
+(if (> @FAIL-COUNT 0)
+  (throw (str @FAIL-COUNT " test(s) failed"))
+  (println "✅ 모든 테스트 통과"))
