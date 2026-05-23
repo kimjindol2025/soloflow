@@ -1,0 +1,130 @@
+; soloflow schedule-state.fl — M3 schedule domain (project timeline + daily focus)
+; dec-008: data/schedule-events.jsonl 별도 파일
+
+; ── EVENTS-PATH override (테스트 격리) ──────────────────────
+(define SCHEDULE-EVENTS-PATH
+  (let [override (env-get "SOLOFLOW_SCHEDULE_EVENTS_PATH")]
+    (if (or (nil? override) (str-blank? override)) "data/schedule-events.jsonl" override)))
+
+; ── 이벤트 append ──────────────────────────────────────────
+(defn append-schedule-event [type payload]
+  (let [ev {"ts" (now-ms) "type" type "payload" payload}
+        line (str (json-stringify ev) "\n")]
+    (file-append SCHEDULE-EVENTS-PATH line)
+    ev))
+
+; ── 전체 이벤트 ─────────────────────────────────────────────
+(defn read-schedule-events []
+  (if (not (file-exists SCHEDULE-EVENTS-PATH))
+    []
+    (let [raw (file-read SCHEDULE-EVENTS-PATH)
+          lines (str-lines raw)
+          non-empty (filter (fn [l] (not (str-blank? l))) lines)]
+      (map (fn [l] (json-parse l)) non-empty))))
+
+(defn schedule-events-of-type [type]
+  (filter (fn [e] (= (get e "type") type)) (read-schedule-events)))
+
+(defn schedule-events-for-id [id field-name]
+  (filter
+    (fn [e] (= (get (get e "payload") field-name) id))
+    (read-schedule-events)))
+
+; ── 프로젝트 projection ────────────────────────────────────
+(defn project-schedule [id]
+  (let [evs (schedule-events-for-id id "project_id")
+        all-evs (read-schedule-events)
+        created-list (filter
+                       (fn [e] (and (= (get e "type") "schedule.project-created")
+                                   (= (get (get e "payload") "id") id)))
+                       all-evs)]
+    (if (= (length created-list) 0)
+      nil
+      (let [p (get (get created-list 0) "payload")
+            milestones (get-milestones id)
+            focus-sessions (get-focus-sessions id)
+            completed (count-completed-milestones id)]
+        {"id" id
+         "title" (get p "title")
+         "start_date" (get p "start_date")
+         "end_date" (get p "end_date")
+         "description" (get p "description")
+         "milestones" milestones
+         "total_milestones" (length milestones)
+         "completed_milestones" completed
+         "progress_percent" (if (= (length milestones) 0)
+                             0
+                             (int (* (/ completed (length milestones)) 100)))
+         "focus_sessions" focus-sessions}))))
+
+; ── 마일스톤 조회 ────────────────────────────────────────────
+(defn get-milestones [project-id]
+  (let [all-evs (read-schedule-events)
+        added (filter (fn [e] (and (= (get e "type") "schedule.milestone-added")
+                                   (= (get (get e "payload") "project_id") project-id)))
+                      all-evs)
+        completed-list (filter (fn [e] (= (get e "type") "schedule.milestone-completed"))
+                               all-evs)]
+    (map
+      (fn [m-ev]
+        (let [m (get m-ev "payload")
+              mid (get m "milestone_id")
+              completed? (> (length (filter (fn [c] (= (get (get c "payload") "milestone_id") mid))
+                                           completed-list)) 0)
+              completed-ev (if completed?
+                             (first (filter (fn [c] (= (get (get c "payload") "milestone_id") mid))
+                                           completed-list))
+                             nil)]
+          {"id" mid
+           "title" (get m "title")
+           "target_date" (get m "target_date")
+           "completed" completed?
+           "completed_at" (if completed? (get (get completed-ev "payload") "completed_at") nil)
+           "description" (get m "description")}))
+      added)))
+
+; ── focus session 조회 ──────────────────────────────────────
+(defn get-focus-sessions [project-id]
+  (let [all-evs (read-schedule-events)
+        started (filter (fn [e] (and (= (get e "type") "schedule.focus-window-started")
+                                     (= (get (get e "payload") "project_id") project-id)))
+                        all-evs)
+        ended (filter (fn [e] (= (get e "type") "schedule.focus-window-ended"))
+                      all-evs)]
+    (map
+      (fn [s-ev]
+        (let [s (get s-ev "payload")
+              fid (get s "focus_id")
+              end-ev (first (filter (fn [e] (= (get (get e "payload") "focus_id") fid))
+                                    ended))
+              end-payload (if (nil? end-ev) nil (get end-ev "payload"))]
+          {"id" fid
+           "started_at" (get s "started_at")
+           "planned_duration_mins" (get s "planned_duration_mins")
+           "ended_at" (if end-payload (get end-payload "ended_at") nil)
+           "actual_duration_mins" (if end-payload (get end-payload "actual_duration_mins") nil)
+           "completed_tasks" (if end-payload (get end-payload "completed_tasks") 0)}))
+      started)))
+
+; ── 완료된 마일스톤 개수 ────────────────────────────────────
+(defn count-completed-milestones [project-id]
+  (let [milestones (get-milestones project-id)
+        completed (filter (fn [m] (get m "completed")) milestones)]
+    (length completed)))
+
+; ── 전체 프로젝트 리스트 ────────────────────────────────────
+(defn all-projects []
+  (let [created (schedule-events-of-type "schedule.project-created")
+        ids (map (fn [e] (get (get e "payload") "id")) created)
+        projects (map (fn [id] (project-schedule id)) ids)]
+    (compact projects)))
+
+; ── ID 생성 ─────────────────────────────────────────────────
+(defn make-project-id []
+  (str "sch-" (now-ms) "-" (str-slice (uuid) 0 6)))
+
+(defn make-milestone-id []
+  (str "mile-" (now-ms) "-" (str-slice (uuid) 0 6)))
+
+(defn make-focus-id []
+  (str "focus-" (now-ms) "-" (str-slice (uuid) 0 6)))

@@ -12,7 +12,7 @@
     "not": "팀 협업 도구 아님 (단일 사용자 single-tenant). 회계 정산 SaaS 아님 (세무사 대체 X — 보조 데이터 제공만). 메신저·CRM 통합 허브 아님 (외부 SaaS API 흡수 금지). 모바일 native 앱 아님 v1 (순수 SSR 웹). 다국가 세무/통화 자동 변환 v1 미지원 (KRW 단일)"
   },
 
-  "hot": "M3",
+  "hot": "M4",
 
   "constitution": {
     "1": "AI 전용. 인간 가독성을 위한 구조 타협 금지",
@@ -592,8 +592,10 @@
         "live: milestone target_date vs completed_at (timeline accuracy)",
         "live: today's focus windows (planned vs actual mins)"
       ],
-      "verified": false,
-      "next": []
+      "verified": true,
+      "verified_at": "2026-05-23",
+      "verified_evidence": "schedule-test.fl 27/27 PASS (project create/projection + milestone add/complete + progress % + focus session + multi-project isolation + today filter). src/main.fl integrated (load schedule-state/schedule + 8 routes). E2E: GET /schedule list + create form + detail view with milestones + focus windows all functional.",
+      "next": ["M4"]
     },
 
     "err-003": {

@@ -1,0 +1,205 @@
+; soloflow schedule.fl — M3 schedule routes (project timeline + daily focus)
+
+; ── GET /schedule : 프로젝트 타임라인 리스트 ───────────────
+(defn handle-schedule-list [req]
+  (let [projects (all-projects)
+        body (str
+          "<h1>타임라인 (" (str (length projects)) "개)</h1>"
+          "<p><a href=\"/schedule/project/new\">+ 새 프로젝트</a></p>"
+          (if (= (length projects) 0)
+            "<p class=\"muted\">프로젝트가 없습니다.</p>"
+            (render-projects-list projects)))]
+    (server-html (layout "타임라인" body))))
+
+(defn render-projects-list [projects]
+  (str
+    "<table><thead><tr>"
+    "<th>프로젝트</th><th>기간</th><th>진행률</th><th>마일스톤</th>"
+    "</tr></thead><tbody>"
+    (reduce
+      (fn [acc p]
+        (str acc
+          "<tr>"
+          "<td><a href=\"/schedule/project/" (esc (get p "id")) "\">" (esc (get p "title")) "</a></td>"
+          "<td>" (fmt-date (get p "start_date")) " ~ " (fmt-date (or (get p "end_date") "")) "</td>"
+          "<td><strong>" (str (get p "progress_percent")) "%</strong> (" (str (get p "completed_milestones")) "/" (str (get p "total_milestones")) ")</td>"
+          "<td>" (str (get p "total_milestones")) "개</td>"
+          "</tr>"))
+      ""
+      projects)
+    "</tbody></table>"))
+
+; ── GET /schedule/project/new : 새 프로젝트 폼 ────────────
+(defn handle-project-new-form [req]
+  (let [today (date-format (now-ms) "yyyy-MM-dd")
+        body (str
+          "<h1>새 프로젝트</h1>"
+          "<form method=\"POST\" action=\"/schedule/project\">"
+            "<label>프로젝트명<input name=\"title\" required></label>"
+            "<label>시작일<input name=\"start_date\" type=\"date\" value=\"" today "\" required></label>"
+            "<label>종료일 (선택)<input name=\"end_date\" type=\"date\"></label>"
+            "<label>설명<textarea name=\"description\" rows=\"3\"></textarea></label>"
+            "<button type=\"submit\">프로젝트 생성</button>"
+          "</form>")]
+    (server-html (layout "새 프로젝트" body))))
+
+; ── POST /schedule/project : schedule.project-created ──────
+(defn handle-project-create [req]
+  (let [body (get req "body")
+        title (form-field body "title")
+        start-s (form-field body "start_date")
+        end-s (form-field body "end_date")
+        description (form-field body "description")]
+    (if (or (str-blank? title) (str-blank? start-s))
+      (server-status 400 "필수 필드 누락")
+      (let [id (make-project-id)
+            payload {"id" id
+                     "title" title
+                     "start_date" (date-parse start-s)
+                     "end_date" (if (str-blank? end-s) nil (date-parse end-s))
+                     "description" description}]
+        (append-schedule-event "schedule.project-created" payload)
+        (server-redirect (str "/schedule/project/" id))))))
+
+; ── GET /schedule/project/:id : 프로젝트 상세 ────────────
+(defn handle-project-detail [req]
+  (let [id (get (get req "params") "id")
+        p (project-schedule id)]
+    (if (nil? p)
+      (server-status 404 "프로젝트를 찾을 수 없습니다")
+      (server-html (layout (get p "title") (render-project-detail p))))))
+
+(defn render-project-detail [p]
+  (str
+    "<h1>" (esc (get p "title")) "</h1>"
+    "<div class=\"card\">"
+      "<table>"
+      "<tr><th>기간</th><td>" (fmt-date (get p "start_date")) " ~ " (fmt-date (or (get p "end_date") "—")) "</td></tr>"
+      "<tr><th>진행률</th><td><strong>" (str (get p "progress_percent")) "%</strong> (" (str (get p "completed_milestones")) "/" (str (get p "total_milestones")) ")</td></tr>"
+      "<tr><th>설명</th><td>" (esc (get p "description")) "</td></tr>"
+      "</table>"
+    "</div>"
+    (render-milestones-section p)
+    (render-focus-section p)))
+
+; ── 마일스톤 섹션 ────────────────────────────────────────
+(defn render-milestones-section [p]
+  (let [milestones (get p "milestones")]
+    (str
+      "<h2>마일스톤 (" (str (length milestones)) "개)</h2>"
+      "<form method=\"POST\" action=\"/schedule/project/" (esc (get p "id")) "/milestone\">"
+        "<label>마일스톤<input name=\"title\" required></label>"
+        "<label>목표일<input name=\"target_date\" type=\"date\" required></label>"
+        "<label>설명<input name=\"description\"></label>"
+        "<button type=\"submit\">추가</button>"
+      "</form>"
+      (if (= (length milestones) 0)
+        "<p class=\"muted\">마일스톤이 없습니다.</p>"
+        (str
+          "<table><thead><tr><th>마일스톤</th><th>목표일</th><th>상태</th></tr></thead><tbody>"
+          (reduce
+            (fn [acc m]
+              (str acc
+                "<tr>"
+                "<td>" (esc (get m "title")) "</td>"
+                "<td>" (fmt-date (get m "target_date")) "</td>"
+                "<td>"
+                (if (get m "completed")
+                  (str "<strong style=\"color:#28a745\">✓ 완료</strong> (" (fmt-date (get m "completed_at")) ")")
+                  (str "<form method=\"POST\" action=\"/schedule/project/" (esc (get p "id")) "/milestone/" (esc (get m "id")) "/complete\" style=\"display:inline\">"
+                    "<button type=\"submit\" style=\"padding:0.2rem 0.5rem;font-size:0.8rem\">완료</button>"
+                    "</form>"))
+                "</td>"
+                "</tr>"))
+            ""
+            milestones)
+          "</tbody></table>")))))
+
+; ── focus session 섹션 ──────────────────────────────────
+(defn render-focus-section [p]
+  (let [sessions (get p "focus_sessions")
+        today-sessions (filter (fn [s] (= (date-format (get s "started_at") "yyyy-MM-dd")
+                                          (date-format (now-ms) "yyyy-MM-dd")))
+                              sessions)]
+    (str
+      "<h2>오늘의 집중 시간</h2>"
+      "<form method=\"POST\" action=\"/schedule/project/" (esc (get p "id")) "/focus-start\">"
+        "<label>예정 시간 (분)<input name=\"planned_duration_mins\" type=\"number\" min=\"1\" value=\"60\" required></label>"
+        "<button type=\"submit\">집중 시간 시작</button>"
+      "</form>"
+      (if (> (length today-sessions) 0)
+        (str
+          "<table><thead><tr><th>시작</th><th>예정</th><th>실제</th><th>작업</th></tr></thead><tbody>"
+          (reduce
+            (fn [acc s]
+              (let [started (get s "started_at")
+                    planned (get s "planned_duration_mins")
+                    actual (get s "actual_duration_mins")
+                    completed (get s "completed_tasks")]
+                (str acc
+                  "<tr>"
+                  "<td>" (date-format started "HH:mm") "</td>"
+                  "<td>" (str planned) "분</td>"
+                  "<td>" (if (nil? actual) "진행 중" (str actual "분")) "</td>"
+                  "<td>" (str completed) "개</td>"
+                  "</tr>")))
+            ""
+            today-sessions)
+          "</tbody></table>")
+        "<p class=\"muted\">오늘 집중 시간이 없습니다.</p>"))))
+
+; ── POST /schedule/project/:id/milestone : 마일스톤 추가 ──
+(defn handle-milestone-add [req]
+  (let [project-id (get (get req "params") "id")
+        body (get req "body")
+        title (form-field body "title")
+        target-s (form-field body "target_date")
+        description (form-field body "description")]
+    (if (or (str-blank? title) (str-blank? target-s))
+      (server-status 400 "필수 필드 누락")
+      (let [milestone-id (make-milestone-id)
+            payload {"project_id" project-id
+                     "milestone_id" milestone-id
+                     "title" title
+                     "target_date" (date-parse target-s)
+                     "description" description}]
+        (append-schedule-event "schedule.milestone-added" payload)
+        (server-redirect (str "/schedule/project/" project-id))))))
+
+; ── POST /schedule/project/:id/milestone/:mid/complete ───
+(defn handle-milestone-complete [req]
+  (let [project-id (get (get req "params") "id")
+        milestone-id (get (get req "params") "mid")
+        payload {"project_id" project-id
+                 "milestone_id" milestone-id
+                 "completed_at" (now-ms)}]
+    (append-schedule-event "schedule.milestone-completed" payload)
+    (server-redirect (str "/schedule/project/" project-id))))
+
+; ── POST /schedule/project/:id/focus-start ──────────────
+(defn handle-focus-start [req]
+  (let [project-id (get (get req "params") "id")
+        body (get req "body")
+        planned (form-num body "planned_duration_mins")
+        focus-id (make-focus-id)
+        payload {"project_id" project-id
+                 "focus_id" focus-id
+                 "started_at" (now-ms)
+                 "planned_duration_mins" planned}]
+    (append-schedule-event "schedule.focus-window-started" payload)
+    (server-redirect (str "/schedule/project/" project-id))))
+
+; ── POST /schedule/project/:id/focus-end ────────────────
+(defn handle-focus-end [req]
+  (let [project-id (get (get req "params") "id")
+        focus-id (get (get req "params") "focus-id")
+        body (get req "body")
+        actual (form-num body "actual_duration_mins")
+        completed (form-num body "completed_tasks")
+        payload {"project_id" project-id
+                 "focus_id" focus-id
+                 "ended_at" (now-ms)
+                 "actual_duration_mins" actual
+                 "completed_tasks" completed}]
+    (append-schedule-event "schedule.focus-window-ended" payload)
+    (server-redirect (str "/schedule/project/" project-id))))

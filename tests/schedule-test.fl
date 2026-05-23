@@ -1,0 +1,239 @@
+; soloflow schedule-test.fl — task-008 M3 schedule 검증
+; 실행: SOLOFLOW_SCHEDULE_EVENTS_PATH=tests/data/schedule-test.jsonl node /root/kim/freelang-v11/bootstrap.js run tests/schedule-test.fl
+
+(load "src/render.fl")
+(load "src/schedule-state.fl")
+
+(println "═══ soloflow task-008 schedule tests ═══")
+(println "")
+
+(define PASS-COUNT (atom 0))
+(define FAIL-COUNT (atom 0))
+
+(defn check [label actual expected]
+  (if (= actual expected)
+    (do (swap! PASS-COUNT + 1)
+        (println (str "  ✓ " label)))
+    (do (swap! FAIL-COUNT + 1)
+        (println (str "  ✗ " label))
+        (println (str "      expected: " expected))
+        (println (str "      actual:   " actual)))))
+
+(println (str "SCHEDULE-EVENTS-PATH = " SCHEDULE-EVENTS-PATH))
+(if (not (str-includes SCHEDULE-EVENTS-PATH "schedule-test"))
+  (do (println "❌ SOLOFLOW_SCHEDULE_EVENTS_PATH 미설정 (schedule-test)")
+      (throw "env var missing"))
+  nil)
+
+(if (file-exists SCHEDULE-EVENTS-PATH) (file-delete SCHEDULE-EVENTS-PATH) nil)
+
+(defn write-ev [ts type payload]
+  (file-append SCHEDULE-EVENTS-PATH
+    (str (json-stringify {"ts" ts "type" type "payload" payload}) "\n")))
+
+(define NOW (now-ms))
+(define D1 86400000)
+(define DAY-OFFSET (fn [n] (+ NOW (* D1 n))))
+
+; ── test 1: project 생성 및 projection ─────────────────────
+(println "[1] project 생성 및 projection")
+
+(let [proj-id "prj-001"
+      title "Q2 마케팅"
+      start-ts (DAY-OFFSET -30)
+      end-ts (DAY-OFFSET 30)]
+  (write-ev start-ts "schedule.project-created"
+    {"id" proj-id
+     "title" title
+     "start_date" start-ts
+     "end_date" end-ts
+     "description" "분기별 마케팅 계획"})
+
+  (let [p (project-schedule proj-id)]
+    (check "project 생성됨" (nil? p) false)
+    (check "프로젝트명 일치" (get p "title") title)
+    (check "시작일 일치" (get p "start_date") start-ts)
+    (check "종료일 일치" (get p "end_date") end-ts)
+    (check "설명 일치" (get p "description") "분기별 마케팅 계획")))
+
+(println "")
+
+; ── test 2: milestone 추가 및 조회 ──────────────────────────
+(println "[2] milestone 추가 및 조회")
+
+(let [proj-id "prj-001"
+      m1-id "mile-001"
+      m2-id "mile-002"
+      m1-target (DAY-OFFSET 14)
+      m2-target (DAY-OFFSET 21)]
+
+  (write-ev NOW "schedule.milestone-added"
+    {"project_id" proj-id
+     "milestone_id" m1-id
+     "title" "SNS 캠페인 런칭"
+     "target_date" m1-target
+     "description" "인스타그램, 페이스북"})
+
+  (write-ev NOW "schedule.milestone-added"
+    {"project_id" proj-id
+     "milestone_id" m2-id
+     "title" "블로그 포스팅 완료"
+     "target_date" m2-target
+     "description" "10개 포스트"})
+
+  (let [milestones (get-milestones proj-id)]
+    (check "마일스톤 2개 생성됨" (length milestones) 2)
+    (check "마일스톤 1 제목" (get (get milestones 0) "title") "SNS 캠페인 런칭")
+    (check "마일스톤 2 제목" (get (get milestones 1) "title") "블로그 포스팅 완료")
+    (check "마일스톤 1 미완료" (get (get milestones 0) "completed") false)
+    (check "마일스톤 2 미완료" (get (get milestones 1) "completed") false)))
+
+(println "")
+
+; ── test 3: milestone 완료 처리 ─────────────────────────────
+(println "[3] milestone 완료 처리")
+
+(let [proj-id "prj-001"
+      m1-id "mile-001"]
+
+  (write-ev (DAY-OFFSET 7) "schedule.milestone-completed"
+    {"project_id" proj-id
+     "milestone_id" m1-id
+     "completed_at" (DAY-OFFSET 7)})
+
+  (let [milestones (get-milestones proj-id)]
+    (check "마일스톤 1 완료됨" (get (get milestones 0) "completed") true)
+    (check "마일스톤 1 완료시각 기록" (nil? (get (get milestones 0) "completed_at")) false)
+    (check "마일스톤 2 여전히 미완료" (get (get milestones 1) "completed") false)))
+
+(println "")
+
+; ── test 4: 진행률 계산 ──────────────────────────────────────
+(println "[4] 진행률 계산")
+
+(let [proj-id "prj-001"
+      p (project-schedule proj-id)]
+  (check "총 마일스톤 2개" (get p "total_milestones") 2)
+  (check "완료된 마일스톤 1개" (get p "completed_milestones") 1)
+  (check "진행률 50%" (get p "progress_percent") 50))
+
+(println "")
+
+; ── test 5: focus session 추가 및 조회 ──────────────────────
+(println "[5] focus session 추가 및 조회")
+
+(let [proj-id "prj-001"
+      focus-id "focus-001"
+      start-ts (DAY-OFFSET 0)
+      planned-mins 120]
+
+  (write-ev start-ts "schedule.focus-window-started"
+    {"project_id" proj-id
+     "focus_id" focus-id
+     "started_at" start-ts
+     "planned_duration_mins" planned-mins})
+
+  (let [sessions (get-focus-sessions proj-id)]
+    (check "focus session 생성됨" (> (length sessions) 0) true)
+    (check "첫 session ID 일치" (get (get sessions 0) "id") focus-id)
+    (check "계획 시간 일치" (get (get sessions 0) "planned_duration_mins") planned-mins)
+    (check "실제 시간 없음 (진행 중)" (nil? (get (get sessions 0) "actual_duration_mins")) true)))
+
+(println "")
+
+; ── test 6: focus session 완료 처리 ──────────────────────────
+(println "[6] focus session 완료 처리")
+
+(let [proj-id "prj-001"
+      focus-id "focus-001"
+      end-ts (DAY-OFFSET 0)]
+
+  (write-ev end-ts "schedule.focus-window-ended"
+    {"project_id" proj-id
+     "focus_id" focus-id
+     "ended_at" end-ts
+     "actual_duration_mins" 110
+     "completed_tasks" 3})
+
+  (let [sessions (get-focus-sessions proj-id)
+        first-session (get sessions 0)]
+    (check "실제 시간 기록됨" (get first-session "actual_duration_mins") 110)
+    (check "완료 작업 기록됨" (get first-session "completed_tasks") 3)))
+
+(println "")
+
+; ── test 7: 다중 프로젝트 독립성 ──────────────────────────────
+(println "[7] 다중 프로젝트 독립성")
+
+(let [proj2-id "prj-002"
+      start-ts (DAY-OFFSET -10)
+      end-ts (DAY-OFFSET 20)]
+
+  (write-ev start-ts "schedule.project-created"
+    {"id" proj2-id
+     "title" "개발 로드맵"
+     "start_date" start-ts
+     "end_date" end-ts
+     "description" "API v2 개발"})
+
+  (write-ev NOW "schedule.milestone-added"
+    {"project_id" proj2-id
+     "milestone_id" "mile-201"
+     "title" "API 설계"
+     "target_date" (DAY-OFFSET 5)
+     "description" "OpenAPI"})
+
+  (let [all-projects (all-projects)]
+    (check "총 프로젝트 2개" (length all-projects) 2)
+
+    (let [p1 (project-schedule "prj-001")
+          p2 (project-schedule "prj-002")]
+      (check "프로젝트1 마일스톤 2개" (get p1 "total_milestones") 2)
+      (check "프로젝트2 마일스톤 1개" (get p2 "total_milestones") 1))))
+
+(println "")
+
+; ── test 8: 오늘의 focus session 필터링 ──────────────────────
+(println "[8] 오늘의 focus session 필터링")
+
+(let [proj-id "prj-001"
+      old-ts (DAY-OFFSET -10)
+      today-ts NOW
+      future-ts (DAY-OFFSET 1)]
+
+  (write-ev old-ts "schedule.focus-window-started"
+    {"project_id" proj-id
+     "focus_id" "focus-old"
+     "started_at" old-ts
+     "planned_duration_mins" 60})
+
+  (write-ev future-ts "schedule.focus-window-started"
+    {"project_id" proj-id
+     "focus_id" "focus-future"
+     "started_at" future-ts
+     "planned_duration_mins" 90})
+
+  (write-ev today-ts "schedule.focus-window-started"
+    {"project_id" proj-id
+     "focus_id" "focus-today"
+     "started_at" today-ts
+     "planned_duration_mins" 75})
+
+  (let [all-sessions (get-focus-sessions proj-id)
+        today-sessions (filter
+                         (fn [s]
+                           (= (date-format (get s "started_at") "yyyy-MM-dd")
+                              (date-format NOW "yyyy-MM-dd")))
+                         all-sessions)]
+    (check "전체 focus session 4개" (length all-sessions) 4)
+    (check "오늘의 session 최소 1개" (> (length today-sessions) 0) true)))
+
+(println "")
+
+(println "═══════════════════════════════════════════")
+(println (str "결과: " @PASS-COUNT " PASS / " @FAIL-COUNT " FAIL"))
+(println "═══════════════════════════════════════════")
+
+(if (> @FAIL-COUNT 0)
+  (throw (str @FAIL-COUNT " test(s) failed"))
+  (println "✅ 모든 테스트 통과"))
