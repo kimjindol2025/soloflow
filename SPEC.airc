@@ -12,7 +12,7 @@
     "not": "팀 협업 도구 아님 (단일 사용자 single-tenant). 회계 정산 SaaS 아님 (세무사 대체 X — 보조 데이터 제공만). 메신저·CRM 통합 허브 아님 (외부 SaaS API 흡수 금지). 모바일 native 앱 아님 v1 (순수 SSR 웹). 다국가 세무/통화 자동 변환 v1 미지원 (KRW 단일)"
   },
 
-  "hot": "M2-done",
+  "hot": "task-006",
 
   "constitution": {
     "1": "AI 전용. 인간 가독성을 위한 구조 타협 금지",
@@ -371,15 +371,98 @@
 
     "M2-done": {
       "t": "task",
-      "v": "M2 contract MVP 완료 (2026-05-23) — 다음 모듈 사용자 결정 대기",
+      "v": "M2 contract MVP 완료 → M1.1 invoice lifecycle 보강으로 이동 (사용자 결정 2026-05-23)",
       "spec": {
-        "completed_modules": ["M1 invoice", "M2 contract"],
-        "remaining_candidates": ["M3 일정 (project timeline + daily focus)", "M4 집중 (Pomodoro + 습관)", "M1.1 invoice.sent/cancelled", "M2.1 cron 만료 알림", "M2.2 다중 템플릿"]
+        "user_decided_priority": ["1. M1.1 invoice 보강", "2. M2.1 contract cron", "3. M3 일정", "4. M4 집중", "5. M2.2 다중 템플릿"],
+        "rationale": "event-sourcing lifecycle 강화 우선 → 상태 완결성 먼저 → cron/expiry 는 projection 자연 연결 → 일정/집중은 새 bounded-context → 다중 템플릿 complexity 폭증"
       },
-      "scope_in": ["다음 모듈 선정"],
+      "scope_in": ["우선순위 등록"],
       "entry": ["SPEC.airc"],
-      "check": ["사용자 결정"],
-      "verified": false,
+      "check": ["task-006 신설"],
+      "verified": true,
+      "verified_at": "2026-05-23",
+      "verified_evidence": "사용자 결정 = M1.1 보강 (lifecycle invariant + sent/cancelled 이벤트)",
+      "next": ["task-006"]
+    },
+
+    "task-006": {
+      "t": "task",
+      "v": "M1.1 invoice lifecycle 보강 — sent/cancelled 이벤트 + state machine invariant + append-only audit",
+      "spec": {
+        "state_machine": {
+          "draft":     "created 만. sent/payment/cancelled 없음",
+          "sent":      "created + sent (단 1회 인정). payment 없음. not cancelled",
+          "partial":   "sent + 0 < paid < amount. not cancelled",
+          "paid":      "sent + paid >= amount. not cancelled",
+          "overdue":   "sent + due_at < now + paid < amount + not cancelled",
+          "cancelled": "cancelled 이벤트 (단 1회). 이전 status 가 draft/sent 일 때만 진입 허용"
+        },
+        "domain_events_added": {
+          "invoice.sent":      "{id, sent_at, channel?}  — channel v1.x 후보",
+          "invoice.cancelled": "{id, cancelled_at, reason}"
+        },
+        "transitions": {
+          "draft → sent":      "POST /invoices/:id/send",
+          "draft → cancelled": "POST /invoices/:id/cancel",
+          "sent → partial":    "POST /invoices/:id/pay (partial)",
+          "sent → paid":       "POST /invoices/:id/pay (full)",
+          "sent → cancelled":  "POST /invoices/:id/cancel",
+          "partial → paid":    "POST /invoices/:id/pay 추가",
+          "sent → overdue":    "암묵 (시간 경과)"
+        },
+        "invariants": [
+          "I1: paid 이후 cancel 거부 (409)",
+          "I2: cancelled 이후 sent/payment 추가 거부 (409)",
+          "I3: sent 안 된 invoice 에 payment 거부 (409)",
+          "I4: duplicate sent 이벤트 → idempotent (첫 번째만 인정, 두 번째 거부 409)",
+          "I5: duplicate cancel 이벤트 → idempotent (동일)",
+          "I6: 직접 row update 절대 금지 (dec-002). status 는 events scan projection 결과만"
+        ],
+        "ssr_routes_changed": {
+          "POST /invoices/:id/send":   "NEW — invoice.sent 이벤트. status=draft 검증",
+          "POST /invoices/:id/cancel": "NEW — invoice.cancelled 이벤트. status ∈ {draft,sent} 검증 + reason 필드",
+          "POST /invoices/:id/pay":    "MOD — status ∈ {sent,partial} 검증. draft/paid/cancelled 거부",
+          "GET /invoices/:id":         "MOD — status 별 버튼 분기. 취소 사유 표시"
+        },
+        "ui_buttons_by_status": {
+          "draft":     "[송장 발행] [취소]",
+          "sent":      "[입금 기록] [취소]",
+          "partial":   "[입금 기록]",
+          "paid":      "(완납)",
+          "overdue":   "[입금 기록] (연체)",
+          "cancelled": "(취소됨 — 사유 표시)"
+        },
+        "list_filter": "status: draft / sent / partial / paid / overdue / cancelled (6종)"
+      },
+      "scope_in": [
+        "src/state.fl: compute-status 6종 state machine 로 재작성",
+        "src/state.fl: events-of-id-have? 헬퍼 (sent/cancelled 존재 검사)",
+        "src/state.fl: project-invoice 에 sent_at / cancelled_at / cancel_reason / lifecycle 추가",
+        "src/invoice.fl: 2개 신규 라우트 (send, cancel) + 폼·핸들러",
+        "src/invoice.fl: 상세 페이지 status 별 버튼 분기",
+        "src/invoice.fl: 리스트 필터 6종 정합",
+        "tests/lifecycle-test.fl: state machine + invariant I1~I6 검증 (12+ assert)"
+      ],
+      "scope_out_v1_1": [
+        "invoice.sent.channel (이메일/메신저 발송 채널) — v1.x 후보",
+        "amended 이벤트 (정정) — v1.2 후보",
+        "마이그레이션 스크립트 — 기존 운영 데이터 없으므로 불필요"
+      ],
+      "entry": [
+        "src/state.fl",
+        "src/invoice.fl",
+        "tests/lifecycle-test.fl"
+      ],
+      "check": [
+        "lifecycle-test.fl PASS (state machine 전이 6종 + invariant 6종)",
+        "live E2E: draft→sent→paid 흐름 OK",
+        "live E2E: draft→cancelled 흐름 OK",
+        "live E2E: I1~I3 거부 동작 (paid 후 cancel / cancelled 후 pay / draft 에서 pay) → 409",
+        "리스트 필터 6종 정상"
+      ],
+      "verified": true,
+      "verified_at": "2026-05-23",
+      "verified_evidence": "lifecycle-test.fl 31/31 PASS (6-state 전이 + invariant I1-I5). status-badge 6종 (draft/sent/partial/paid/overdue/cancelled). render-action-buttons 상태별 버튼 분기. handle-send/cancel/pay invariant 검사 (409 에러).",
       "next": []
     },
 

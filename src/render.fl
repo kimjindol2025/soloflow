@@ -87,10 +87,13 @@
 " body-html "
 </body></html>"))
 
-; ── 송장 status → badge HTML ───────────────────────────────
+; ── 송장 status → badge HTML (6-state: draft/sent/partial/paid/overdue/cancelled) ──
 (defn status-badge [st]
   (cond
-    (= st "paid")     "<span class=\"badge b-paid\">완납</span>"
+    (= st "draft")    "<span class=\"badge b-open\">미발행</span>"
+    (= st "sent")     "<span class=\"badge b-open\">발행</span>"
     (= st "partial")  "<span class=\"badge b-partial\">부분입금</span>"
+    (= st "paid")     "<span class=\"badge b-paid\">완납</span>"
     (= st "overdue")  "<span class=\"badge b-overdue\">연체</span>"
+    (= st "cancelled") "<span class=\"badge\" style=\"background:#e2e3e5;color:#383d41\">취소됨</span>"
     :else             "<span class=\"badge b-open\">미수</span>"))

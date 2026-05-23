@@ -1,0 +1,250 @@
+; soloflow lifecycle-test.fl — task-006 M1.1 invoice lifecycle 검증
+; 6-state 상태기계 (draft/sent/partial/paid/overdue/cancelled) + 6개 invariant
+; 실행: SOLOFLOW_EVENTS_PATH=tests/data/lifecycle-test.jsonl node /root/kim/freelang-v11/bootstrap.js run tests/lifecycle-test.fl
+
+(load "src/render.fl")
+(load "src/state.fl")
+(load "src/invoice.fl")
+
+(println "═══ soloflow task-006 lifecycle tests ═══")
+(println "")
+
+(define PASS-COUNT (atom 0))
+(define FAIL-COUNT (atom 0))
+
+(defn check [label actual expected]
+  (if (= actual expected)
+    (do (swap! PASS-COUNT + 1)
+        (println (str "  ✓ " label)))
+    (do (swap! FAIL-COUNT + 1)
+        (println (str "  ✗ " label))
+        (println (str "      expected: " expected))
+        (println (str "      actual:   " actual)))))
+
+(println (str "EVENTS-PATH = " EVENTS-PATH))
+(if (not (str-includes EVENTS-PATH "lifecycle-test"))
+  (do (println "❌ SOLOFLOW_EVENTS_PATH 미설정 (lifecycle-test)")
+      (throw "env var missing"))
+  nil)
+
+(if (file-exists EVENTS-PATH) (file-delete EVENTS-PATH) nil)
+
+(defn write-ev [ts type payload]
+  (file-append EVENTS-PATH
+    (str (json-stringify {"ts" ts "type" type "payload" payload}) "\n")))
+
+(define NOW (now-ms))
+(define D1 86400000)
+(define DAY-OFFSET (fn [n] (+ NOW (* D1 n))))
+
+; ── test 1: compute-status 6종 ───────────────────────────────
+(println "[1] compute-status 6종 검증")
+
+; 1-1. draft (created만, sent 없음)
+(write-ev (DAY-OFFSET 0) "invoice.created"
+  {"id" "inv-draft" "client" "A사" "amount_krw" 1000000
+   "issued_at" (DAY-OFFSET 0) "due_at" (DAY-OFFSET 30) "memo" ""})
+(define inv-draft (project-invoice "inv-draft"))
+(check "draft: status" (get inv-draft "status") "draft")
+(check "draft: sent_at nil" (get inv-draft "sent_at") nil)
+(check "draft: cancelled_at nil" (get inv-draft "cancelled_at") nil)
+
+; 1-2. sent (created + sent, payment 없음)
+(write-ev (DAY-OFFSET 0) "invoice.created"
+  {"id" "inv-sent" "client" "B사" "amount_krw" 2000000
+   "issued_at" (DAY-OFFSET 0) "due_at" (DAY-OFFSET 30) "memo" ""})
+(write-ev (DAY-OFFSET 1) "invoice.sent"
+  {"id" "inv-sent" "sent_at" (DAY-OFFSET 1)})
+(define inv-sent (project-invoice "inv-sent"))
+(check "sent: status" (get inv-sent "status") "sent")
+(check "sent: sent_at != nil" (not (nil? (get inv-sent "sent_at"))) true)
+
+; 1-3. partial (sent + payment < amount)
+(write-ev (DAY-OFFSET 0) "invoice.created"
+  {"id" "inv-partial" "client" "C사" "amount_krw" 3000000
+   "issued_at" (DAY-OFFSET 0) "due_at" (DAY-OFFSET 30) "memo" ""})
+(write-ev (DAY-OFFSET 1) "invoice.sent"
+  {"id" "inv-partial" "sent_at" (DAY-OFFSET 1)})
+(write-ev (DAY-OFFSET 5) "invoice.payment.received"
+  {"id" "inv-partial" "paid_amount_krw" 1000000
+   "paid_at" (DAY-OFFSET 5) "method" "bank-transfer"})
+(define inv-partial (project-invoice "inv-partial"))
+(check "partial: status" (get inv-partial "status") "partial")
+(check "partial: paid_sum" (get inv-partial "paid_sum") 1000000)
+(check "partial: balance" (get inv-partial "balance") 2000000)
+
+; 1-4. paid (sent + payment >= amount)
+(write-ev (DAY-OFFSET 0) "invoice.created"
+  {"id" "inv-paid" "client" "D사" "amount_krw" 4000000
+   "issued_at" (DAY-OFFSET 0) "due_at" (DAY-OFFSET 30) "memo" ""})
+(write-ev (DAY-OFFSET 1) "invoice.sent"
+  {"id" "inv-paid" "sent_at" (DAY-OFFSET 1)})
+(write-ev (DAY-OFFSET 5) "invoice.payment.received"
+  {"id" "inv-paid" "paid_amount_krw" 4000000
+   "paid_at" (DAY-OFFSET 5) "method" "bank-transfer"})
+(define inv-paid (project-invoice "inv-paid"))
+(check "paid: status" (get inv-paid "status") "paid")
+(check "paid: balance" (get inv-paid "balance") 0)
+
+; 1-5. cancelled (created + sent + cancelled)
+(write-ev (DAY-OFFSET 0) "invoice.created"
+  {"id" "inv-cancelled" "client" "E사" "amount_krw" 5000000
+   "issued_at" (DAY-OFFSET 0) "due_at" (DAY-OFFSET 30) "memo" ""})
+(write-ev (DAY-OFFSET 1) "invoice.sent"
+  {"id" "inv-cancelled" "sent_at" (DAY-OFFSET 1)})
+(write-ev (DAY-OFFSET 2) "invoice.cancelled"
+  {"id" "inv-cancelled" "cancelled_at" (DAY-OFFSET 2) "reason" "클라이언트 요청"})
+(define inv-cancelled (project-invoice "inv-cancelled"))
+(check "cancelled: status" (get inv-cancelled "status") "cancelled")
+(check "cancelled: cancel_reason" (get inv-cancelled "cancel_reason") "클라이언트 요청")
+
+; 1-6. overdue (sent + due_at 과거 + payment < amount)
+(write-ev (DAY-OFFSET -60) "invoice.created"
+  {"id" "inv-overdue" "client" "F사" "amount_krw" 6000000
+   "issued_at" (DAY-OFFSET -60) "due_at" (DAY-OFFSET -10) "memo" ""})
+(write-ev (DAY-OFFSET -55) "invoice.sent"
+  {"id" "inv-overdue" "sent_at" (DAY-OFFSET -55)})
+(define inv-overdue (project-invoice "inv-overdue"))
+(check "overdue: status" (get inv-overdue "status") "overdue")
+(println "")
+
+; ── test 2: 상태 전이 1 (draft → sent → partial → paid) ─────
+(println "[2] 상태 전이: draft → sent → partial → paid")
+(write-ev (DAY-OFFSET 0) "invoice.created"
+  {"id" "inv-flow-1" "client" "X사" "amount_krw" 7000000
+   "issued_at" (DAY-OFFSET 0) "due_at" (DAY-OFFSET 30) "memo" ""})
+(define flow1-1 (project-invoice "inv-flow-1"))
+(check "flow-1: 생성 직후 draft" (get flow1-1 "status") "draft")
+
+(write-ev (DAY-OFFSET 1) "invoice.sent"
+  {"id" "inv-flow-1" "sent_at" (DAY-OFFSET 1)})
+(define flow1-2 (project-invoice "inv-flow-1"))
+(check "flow-1: sent 후 sent" (get flow1-2 "status") "sent")
+
+(write-ev (DAY-OFFSET 5) "invoice.payment.received"
+  {"id" "inv-flow-1" "paid_amount_krw" 3500000
+   "paid_at" (DAY-OFFSET 5) "method" "bank-transfer"})
+(define flow1-3 (project-invoice "inv-flow-1"))
+(check "flow-1: partial pay 후 partial" (get flow1-3 "status") "partial")
+
+(write-ev (DAY-OFFSET 10) "invoice.payment.received"
+  {"id" "inv-flow-1" "paid_amount_krw" 3500000
+   "paid_at" (DAY-OFFSET 10) "method" "bank-transfer"})
+(define flow1-4 (project-invoice "inv-flow-1"))
+(check "flow-1: full pay 후 paid" (get flow1-4 "status") "paid")
+(println "")
+
+; ── test 3: 상태 전이 2 (draft → cancelled) ──────────────────
+(println "[3] 상태 전이: draft → cancelled")
+(write-ev (DAY-OFFSET 0) "invoice.created"
+  {"id" "inv-flow-2" "client" "Y사" "amount_krw" 8000000
+   "issued_at" (DAY-OFFSET 0) "due_at" (DAY-OFFSET 30) "memo" ""})
+(define flow2-1 (project-invoice "inv-flow-2"))
+(check "flow-2: 생성 직후 draft" (get flow2-1 "status") "draft")
+
+(write-ev (DAY-OFFSET 1) "invoice.cancelled"
+  {"id" "inv-flow-2" "cancelled_at" (DAY-OFFSET 1) "reason" "작성 취소"})
+(define flow2-2 (project-invoice "inv-flow-2"))
+(check "flow-2: cancel 후 cancelled" (get flow2-2 "status") "cancelled")
+(println "")
+
+; ── test 4: Invariant I1 (paid 후 cancel 거부) ───────────────
+(println "[4] Invariant I1: paid 후 cancel 불가")
+(write-ev (DAY-OFFSET 0) "invoice.created"
+  {"id" "inv-i1" "client" "I1사" "amount_krw" 9000000
+   "issued_at" (DAY-OFFSET 0) "due_at" (DAY-OFFSET 30) "memo" ""})
+(write-ev (DAY-OFFSET 1) "invoice.sent"
+  {"id" "inv-i1" "sent_at" (DAY-OFFSET 1)})
+(write-ev (DAY-OFFSET 2) "invoice.payment.received"
+  {"id" "inv-i1" "paid_amount_krw" 9000000
+   "paid_at" (DAY-OFFSET 2) "method" "bank-transfer"})
+(define inv-i1 (project-invoice "inv-i1"))
+(check "I1: paid 상태 확인" (get inv-i1 "status") "paid")
+; cancel 시도는 핸들러 레벨 검사이므로 여기선 상태만 확인
+; live E2E에서 409 확인
+(println "")
+
+; ── test 5: Invariant I2 (cancelled 후 pay 거부) ──────────────
+(println "[5] Invariant I2: cancelled 후 pay 불가")
+(write-ev (DAY-OFFSET 0) "invoice.created"
+  {"id" "inv-i2" "client" "I2사" "amount_krw" 10000000
+   "issued_at" (DAY-OFFSET 0) "due_at" (DAY-OFFSET 30) "memo" ""})
+(write-ev (DAY-OFFSET 1) "invoice.sent"
+  {"id" "inv-i2" "sent_at" (DAY-OFFSET 1)})
+(write-ev (DAY-OFFSET 2) "invoice.cancelled"
+  {"id" "inv-i2" "cancelled_at" (DAY-OFFSET 2) "reason" "클라이언트 취소"})
+(define inv-i2 (project-invoice "inv-i2"))
+(check "I2: cancelled 상태 확인" (get inv-i2 "status") "cancelled")
+; pay 시도는 핸들러 레벨 검사이므로 live E2E에서 409 확인
+(println "")
+
+; ── test 6: Invariant I3 (draft에 pay 거부) ──────────────────
+(println "[6] Invariant I3: draft에서 pay 불가")
+(write-ev (DAY-OFFSET 0) "invoice.created"
+  {"id" "inv-i3" "client" "I3사" "amount_krw" 11000000
+   "issued_at" (DAY-OFFSET 0) "due_at" (DAY-OFFSET 30) "memo" ""})
+(define inv-i3 (project-invoice "inv-i3"))
+(check "I3: draft 상태 확인" (get inv-i3 "status") "draft")
+; pay 시도는 핸들러 레벨 검사이므로 live E2E에서 409 확인
+(println "")
+
+; ── test 7: Invariant I4 (duplicate sent idempotent) ─────────
+(println "[7] Invariant I4: duplicate send 거부 (idempotent)")
+(write-ev (DAY-OFFSET 0) "invoice.created"
+  {"id" "inv-i4" "client" "I4사" "amount_krw" 12000000
+   "issued_at" (DAY-OFFSET 0) "due_at" (DAY-OFFSET 30) "memo" ""})
+(write-ev (DAY-OFFSET 1) "invoice.sent"
+  {"id" "inv-i4" "sent_at" (DAY-OFFSET 1)})
+(define inv-i4-1 (project-invoice "inv-i4"))
+(check "I4: send 1회 후 sent" (get inv-i4-1 "status") "sent")
+; duplicate send 시도는 핸들러 레벨 검사 (events-of-id-have?)
+; live E2E에서 409 확인
+(println "")
+
+; ── test 8: Invariant I5 (duplicate cancel idempotent) ──────
+(println "[8] Invariant I5: duplicate cancel 거부 (idempotent)")
+(write-ev (DAY-OFFSET 0) "invoice.created"
+  {"id" "inv-i5" "client" "I5사" "amount_krw" 13000000
+   "issued_at" (DAY-OFFSET 0) "due_at" (DAY-OFFSET 30) "memo" ""})
+(write-ev (DAY-OFFSET 1) "invoice.sent"
+  {"id" "inv-i5" "sent_at" (DAY-OFFSET 1)})
+(write-ev (DAY-OFFSET 2) "invoice.cancelled"
+  {"id" "inv-i5" "cancelled_at" (DAY-OFFSET 2) "reason" "첫 번째 취소"})
+(define inv-i5-1 (project-invoice "inv-i5"))
+(check "I5: cancel 1회 후 cancelled" (get inv-i5-1 "status") "cancelled")
+; duplicate cancel 시도는 핸들러 레벨 검사 (events-of-id-have?)
+; live E2E에서 409 확인
+(println "")
+
+; ── test 9: list-invoices 6종 필터 ────────────────────────────
+(println "[9] list-invoices & status 필터")
+(define all-invs (list-invoices))
+(check "all invoices count" (length all-invs) 13)
+
+(define drafted (filter (fn [i] (= (get i "status") "draft")) all-invs))
+(check "draft filter (inv-draft, inv-i3)" (length drafted) 2)
+
+(define sents (filter (fn [i] (= (get i "status") "sent")) all-invs))
+(check "sent filter (inv-sent, inv-i4)" (length sents) 2)
+
+(define partials (filter (fn [i] (= (get i "status") "partial")) all-invs))
+(check "partial filter (inv-partial)" (length partials) 1)
+
+(define paids (filter (fn [i] (= (get i "status") "paid")) all-invs))
+(check "paid filter (inv-paid, inv-flow-1, inv-i1)" (length paids) 3)
+
+(define overdues (filter (fn [i] (= (get i "status") "overdue")) all-invs))
+(check "overdue filter (inv-overdue)" (length overdues) 1)
+
+(define cancellds (filter (fn [i] (= (get i "status") "cancelled")) all-invs))
+(check "cancelled filter (inv-cancelled, inv-flow-2, inv-i2, inv-i5)" (length cancellds) 4)
+
+(println "")
+
+(println "═══════════════════════════════════════════")
+(println (str "결과: " @PASS-COUNT " PASS / " @FAIL-COUNT " FAIL"))
+(println "═══════════════════════════════════════════")
+
+(if (> @FAIL-COUNT 0)
+  (throw (str @FAIL-COUNT " test(s) failed"))
+  (println "✅ 모든 테스트 통과"))

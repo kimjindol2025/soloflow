@@ -8,13 +8,15 @@
 (load "src/contract-state.fl")
 (load "src/contract.fl")
 
-; ── 라우트 등록 (12개) ─────────────────────────────────────
-; invoice 6
+; ── 라우트 등록 (14개: invoice 8 + contract 6) ─────────────
+; invoice 8 (M1.1: send/cancel 추가)
 (server-get  "/"                    "handle-index")
 (server-get  "/invoices"            "handle-invoices")
 (server-get  "/invoices/new"        "handle-new-form")
 (server-post "/invoices"            "handle-create")
 (server-get  "/invoices/:id"        "handle-detail")
+(server-post "/invoices/:id/send"   "handle-send")
+(server-post "/invoices/:id/cancel" "handle-cancel")
 (server-post "/invoices/:id/pay"    "handle-pay")
 ; contract 6
 (server-get  "/contracts"            "handle-contracts-list")

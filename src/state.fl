@@ -34,17 +34,29 @@
     (fn [e] (= (get (get e "payload") "id") id))
     (read-events)))
 
-; ── 단일 송장 projection: id → invoice state ───────────────
+; ── 특정 ID에 특정 type 이벤트 있는지 검사 (sent/cancelled 존재) ─
+(defn events-of-id-have? [id type]
+  (let [evs (events-for-id id)
+        match (filter (fn [e] (= (get e "type") type)) evs)]
+    (> (length match) 0)))
+
+; ── 단일 송장 projection: id → invoice state (6-state lifecycle) ─
 (defn project-invoice [id]
   (let [evs (events-for-id id)
         created-list (filter (fn [e] (= (get e "type") "invoice.created")) evs)
+        send-list    (filter (fn [e] (= (get e "type") "invoice.sent")) evs)
+        cancel-list  (filter (fn [e] (= (get e "type") "invoice.cancelled")) evs)
         pay-list     (filter (fn [e] (= (get e "type") "invoice.payment.received")) evs)]
     (if (= (length created-list) 0)
       nil
       (let [c (get (get created-list 0) "payload")
             paid-sum (sum (map (fn [p] (get (get p "payload") "paid_amount_krw")) pay-list))
             amt (get c "amount_krw")
-            status (compute-status amt paid-sum (get c "due_at"))
+            has-sent (> (length send-list) 0)
+            has-cancel (> (length cancel-list) 0)
+            status (compute-status amt paid-sum (get c "due_at") has-sent has-cancel)
+            sent-info (if (> (length send-list) 0) (get (get send-list 0) "payload") nil)
+            cancel-info (if (> (length cancel-list) 0) (get (get cancel-list 0) "payload") nil)
             payments (map (fn [p]
                             (let [pp (get p "payload")]
                               {"ts" (get p "ts")
@@ -61,16 +73,21 @@
          "paid_sum" paid-sum
          "balance" (- amt paid-sum)
          "status" status
+         "sent_at" (if (nil? sent-info) nil (get sent-info "sent_at"))
+         "cancelled_at" (if (nil? cancel-info) nil (get cancel-info "cancelled_at"))
+         "cancel_reason" (if (nil? cancel-info) nil (get cancel-info "reason"))
          "payments" payments}))))
 
-; ── status 산출: amount / paid / due ───────────────────────
-(defn compute-status [amount paid due-at]
+; ── status 산출: 6-state machine (draft/sent/partial/paid/overdue/cancelled) ──
+(defn compute-status [amount paid due-at has-sent has-cancel]
   (cond
+    has-cancel                   "cancelled"
+    (not has-sent)               "draft"
     (>= paid amount)             "paid"
     (> paid 0)                   "partial"
     (and (not (nil? due-at))
          (< due-at (now-ms)))    "overdue"
-    :else                        "open"))
+    :else                        "sent"))
 
 ; ── 전체 송장 리스트 projection ─────────────────────────────
 (defn list-invoices []

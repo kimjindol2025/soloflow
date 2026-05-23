@@ -1,5 +1,6 @@
-; soloflow invoice.fl — M1 invoice MVP 라우트 핸들러
-; 라우트: GET / · /invoices · /invoices/new · POST /invoices · GET /invoices/:id · POST /invoices/:id/pay
+; soloflow invoice.fl — M1.1 invoice lifecycle 라우트 핸들러 (6-state)
+; 라우트: GET / · /invoices · /invoices/new · POST /invoices · GET /invoices/:id
+;         POST /invoices/:id/send · /invoices/:id/cancel · /invoices/:id/pay
 
 ; ── GET / : 요약 대시보드 ──────────────────────────────────
 (defn handle-index [req]
@@ -47,7 +48,7 @@
       invs)
     "</tbody></table>"))
 
-; ── GET /invoices : 전체 송장 리스트 ───────────────────────
+; ── GET /invoices : 전체 송장 리스트 (6-state 필터) ─────────
 (defn handle-invoices [req]
   (let [filter-q (get (get req "query") "status")
         all (list-invoices)
@@ -58,10 +59,12 @@
           "<h1>송장 (" (str (length invs)) "건)</h1>"
           "<p>"
             "<a href=\"/invoices\">전체</a> · "
-            "<a href=\"/invoices?status=open\">미수</a> · "
+            "<a href=\"/invoices?status=draft\">미발행</a> · "
+            "<a href=\"/invoices?status=sent\">발행</a> · "
             "<a href=\"/invoices?status=partial\">부분입금</a> · "
             "<a href=\"/invoices?status=paid\">완납</a> · "
-            "<a href=\"/invoices?status=overdue\">연체</a>"
+            "<a href=\"/invoices?status=overdue\">연체</a> · "
+            "<a href=\"/invoices?status=cancelled\">취소</a>"
           "</p>"
           (if (= (length invs) 0)
             "<p class=\"muted\">송장이 없습니다. <a href=\"/invoices/new\">새 송장 작성</a></p>"
@@ -114,25 +117,62 @@
       (server-html (layout (str "송장 · " (str-slice id 0 16)) (render-detail inv))))))
 
 (defn render-detail [inv]
-  (str
-    "<h1>송장 상세 " (status-badge (get inv "status")) "</h1>"
-    "<div class=\"card\">"
-      "<table>"
-      "<tr><th>송장 ID</th><td><code>" (esc (get inv "id")) "</code></td></tr>"
-      "<tr><th>클라이언트</th><td>" (esc (get inv "client")) "</td></tr>"
-      "<tr><th>금액</th><td>" (money (get inv "amount_krw")) "</td></tr>"
-      "<tr><th>입금 합계</th><td>" (money (get inv "paid_sum")) "</td></tr>"
-      "<tr><th>잔액</th><td><strong>" (money (get inv "balance")) "</strong></td></tr>"
-      "<tr><th>발행일</th><td>" (fmt-date (get inv "issued_at")) "</td></tr>"
-      "<tr><th>만기일</th><td>" (fmt-date (get inv "due_at")) "</td></tr>"
-      "<tr><th>메모</th><td>" (esc (get inv "memo")) "</td></tr>"
-      "</table>"
-    "</div>"
-    (if (not (= (get inv "status") "paid"))
-      (render-pay-form (get inv "id") (get inv "balance"))
-      "")
-    "<h2>입금 이력</h2>"
-    (render-payments (get inv "payments"))))
+  (let [st (get inv "status")]
+    (str
+      "<h1>송장 상세 " (status-badge st) "</h1>"
+      "<div class=\"card\">"
+        "<table>"
+        "<tr><th>송장 ID</th><td><code>" (esc (get inv "id")) "</code></td></tr>"
+        "<tr><th>클라이언트</th><td>" (esc (get inv "client")) "</td></tr>"
+        "<tr><th>금액</th><td>" (money (get inv "amount_krw")) "</td></tr>"
+        "<tr><th>입금 합계</th><td>" (money (get inv "paid_sum")) "</td></tr>"
+        "<tr><th>잔액</th><td><strong>" (money (get inv "balance")) "</strong></td></tr>"
+        "<tr><th>발행일</th><td>" (fmt-date (get inv "issued_at")) "</td></tr>"
+        "<tr><th>만기일</th><td>" (fmt-date (get inv "due_at")) "</td></tr>"
+        "<tr><th>메모</th><td>" (esc (get inv "memo")) "</td></tr>"
+        "</table>"
+      "</div>"
+      (render-action-buttons (get inv "id") st (get inv "balance"))
+      (if (= st "cancelled")
+        (str "<div class=\"card\" style=\"border-color:#6c757d\"><strong>취소 사유:</strong> " (esc (or (get inv "cancel_reason") "—")) "</div>")
+        "")
+      "<h2>입금 이력</h2>"
+      (render-payments (get inv "payments")))))
+
+; ── status 별 작업 버튼 분기 ────────────────────────────────
+(defn render-action-buttons [id status balance]
+  (cond
+    (= status "draft")
+      (str
+        "<div class=\"actions\">"
+        "<form method=\"POST\" action=\"/invoices/" (esc id) "/send\" style=\"display:inline-block\">"
+          "<button type=\"submit\">📤 송장 발행</button>"
+        "</form>"
+        "<form method=\"POST\" action=\"/invoices/" (esc id) "/cancel\" style=\"display:inline-block\">"
+          "<input type=\"hidden\" name=\"reason\" value=\"작성 취소\">"
+          "<button type=\"submit\" style=\"color:#dc3545\">취소</button>"
+        "</form>"
+        "</div>")
+    (= status "sent")
+      (str
+        (render-pay-form id balance)
+        "<div class=\"actions\">"
+        "<form method=\"POST\" action=\"/invoices/" (esc id) "/cancel\" style=\"display:inline-block\">"
+          "<input type=\"hidden\" name=\"reason\" value=\"발행 취소\">"
+          "<button type=\"submit\" style=\"color:#dc3545\">취소</button>"
+        "</form>"
+        "</div>")
+    (= status "partial")
+      (render-pay-form id balance)
+    (= status "paid")
+      "<div class=\"card\" style=\"border-color:#28a745\"><strong style=\"color:#28a745\">✓ 완납</strong></div>"
+    (= status "overdue")
+      (str
+        (render-pay-form id balance)
+        "<div class=\"card\" style=\"border-color:#dc3545\"><strong style=\"color:#dc3545\">⚠ 연체 중</strong></div>")
+    (= status "cancelled")
+      ""
+    :else ""))
 
 (defn render-pay-form [id balance]
   (str
@@ -158,6 +198,34 @@
         "" pays)
       "</tbody></table>")))
 
+; ── POST /invoices/:id/send : invoice.sent (발행) ─────────
+(defn handle-send [req]
+  (let [id (get (get req "params") "id")
+        inv (project-invoice id)]
+    (cond
+      (nil? inv)                 (server-status 404 "송장을 찾을 수 없습니다")
+      (not (= (get inv "status") "draft")) (server-status 409 "미발행 상태에서만 발행할 수 있습니다")
+      (events-of-id-have? id "invoice.sent") (server-status 409 "이미 발행된 송장입니다") ; I4 idempotent
+      :else (do
+        (append-event "invoice.sent" {"id" id "sent_at" (now-ms)})
+        (server-redirect (str "/invoices/" id))))))
+
+; ── POST /invoices/:id/cancel : invoice.cancelled ────────
+(defn handle-cancel [req]
+  (let [id (get (get req "params") "id")
+        inv (project-invoice id)
+        body (get req "body")
+        reason (form-field body "reason")
+        st (if (nil? inv) nil (get inv "status"))]
+    (cond
+      (nil? inv)                      (server-status 404 "송장을 찾을 수 없습니다")
+      (not (or (= st "draft") (= st "sent"))) (server-status 409 "미발행 또는 발행 상태에서만 취소할 수 있습니다") ; I1 paid 후 cancel 거부
+      (events-of-id-have? id "invoice.cancelled") (server-status 409 "이미 취소된 송장입니다") ; I5 idempotent
+      :else (do
+        (append-event "invoice.cancelled"
+                      {"id" id "cancelled_at" (now-ms) "reason" (or reason "사용자 취소")})
+        (server-redirect (str "/invoices/" id))))))
+
 ; ── POST /invoices/:id/pay : invoice.payment.received ──────
 (defn handle-pay [req]
   (let [id (get (get req "params") "id")
@@ -165,11 +233,13 @@
         body (get req "body")
         amount (form-num body "paid_amount_krw")
         paid-s (form-field body "paid_at")
-        method (form-field body "method")]
+        method (form-field body "method")
+        st (if (nil? inv) nil (get inv "status"))]
     (cond
-      (nil? inv)            (server-status 404 "송장을 찾을 수 없습니다")
-      (<= amount 0)         (server-status 400 "입금액은 0보다 커야 합니다")
-      (str-blank? paid-s)   (server-status 400 "입금일 누락")
+      (nil? inv)                              (server-status 404 "송장을 찾을 수 없습니다")
+      (not (or (= st "sent") (= st "partial"))) (server-status 409 "이 상태에서는 입금 기록을 할 수 없습니다") ; I2 cancelled 후 pay 거부, I3 sent 필수
+      (<= amount 0)                           (server-status 400 "입금액은 0보다 커야 합니다")
+      (str-blank? paid-s)                     (server-status 400 "입금일 누락")
       :else (do
         (append-event "invoice.payment.received"
                       {"id" id
