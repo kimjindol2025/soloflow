@@ -1,32 +1,32 @@
-{"ts":1779499876869,"type":"invoice.created","payload":{"id":"inv-draft","client":"A사","amount_krw":1000000,"issued_at":1779499876869,"due_at":1782091876869,"memo":""}}
-{"ts":1779499876869,"type":"invoice.created","payload":{"id":"inv-sent","client":"B사","amount_krw":2000000,"issued_at":1779499876869,"due_at":1782091876869,"memo":""}}
-{"ts":1779586276869,"type":"invoice.sent","payload":{"id":"inv-sent","sent_at":1779586276869}}
-{"ts":1779499876869,"type":"invoice.created","payload":{"id":"inv-partial","client":"C사","amount_krw":3000000,"issued_at":1779499876869,"due_at":1782091876869,"memo":""}}
-{"ts":1779586276869,"type":"invoice.sent","payload":{"id":"inv-partial","sent_at":1779586276869}}
-{"ts":1779931876869,"type":"invoice.payment.received","payload":{"id":"inv-partial","paid_amount_krw":1000000,"paid_at":1779931876869,"method":"bank-transfer"}}
-{"ts":1779499876869,"type":"invoice.created","payload":{"id":"inv-paid","client":"D사","amount_krw":4000000,"issued_at":1779499876869,"due_at":1782091876869,"memo":""}}
-{"ts":1779586276869,"type":"invoice.sent","payload":{"id":"inv-paid","sent_at":1779586276869}}
-{"ts":1779931876869,"type":"invoice.payment.received","payload":{"id":"inv-paid","paid_amount_krw":4000000,"paid_at":1779931876869,"method":"bank-transfer"}}
-{"ts":1779499876869,"type":"invoice.created","payload":{"id":"inv-cancelled","client":"E사","amount_krw":5000000,"issued_at":1779499876869,"due_at":1782091876869,"memo":""}}
-{"ts":1779586276869,"type":"invoice.sent","payload":{"id":"inv-cancelled","sent_at":1779586276869}}
-{"ts":1779672676869,"type":"invoice.cancelled","payload":{"id":"inv-cancelled","cancelled_at":1779672676869,"reason":"클라이언트 요청"}}
-{"ts":1774315876869,"type":"invoice.created","payload":{"id":"inv-overdue","client":"F사","amount_krw":6000000,"issued_at":1774315876869,"due_at":1778635876869,"memo":""}}
-{"ts":1774747876869,"type":"invoice.sent","payload":{"id":"inv-overdue","sent_at":1774747876869}}
-{"ts":1779499876869,"type":"invoice.created","payload":{"id":"inv-flow-1","client":"X사","amount_krw":7000000,"issued_at":1779499876869,"due_at":1782091876869,"memo":""}}
-{"ts":1779586276869,"type":"invoice.sent","payload":{"id":"inv-flow-1","sent_at":1779586276869}}
-{"ts":1779931876869,"type":"invoice.payment.received","payload":{"id":"inv-flow-1","paid_amount_krw":3500000,"paid_at":1779931876869,"method":"bank-transfer"}}
-{"ts":1780363876869,"type":"invoice.payment.received","payload":{"id":"inv-flow-1","paid_amount_krw":3500000,"paid_at":1780363876869,"method":"bank-transfer"}}
-{"ts":1779499876869,"type":"invoice.created","payload":{"id":"inv-flow-2","client":"Y사","amount_krw":8000000,"issued_at":1779499876869,"due_at":1782091876869,"memo":""}}
-{"ts":1779586276869,"type":"invoice.cancelled","payload":{"id":"inv-flow-2","cancelled_at":1779586276869,"reason":"작성 취소"}}
-{"ts":1779499876869,"type":"invoice.created","payload":{"id":"inv-i1","client":"I1사","amount_krw":9000000,"issued_at":1779499876869,"due_at":1782091876869,"memo":""}}
-{"ts":1779586276869,"type":"invoice.sent","payload":{"id":"inv-i1","sent_at":1779586276869}}
-{"ts":1779672676869,"type":"invoice.payment.received","payload":{"id":"inv-i1","paid_amount_krw":9000000,"paid_at":1779672676869,"method":"bank-transfer"}}
-{"ts":1779499876869,"type":"invoice.created","payload":{"id":"inv-i2","client":"I2사","amount_krw":10000000,"issued_at":1779499876869,"due_at":1782091876869,"memo":""}}
-{"ts":1779586276869,"type":"invoice.sent","payload":{"id":"inv-i2","sent_at":1779586276869}}
-{"ts":1779672676869,"type":"invoice.cancelled","payload":{"id":"inv-i2","cancelled_at":1779672676869,"reason":"클라이언트 취소"}}
-{"ts":1779499876869,"type":"invoice.created","payload":{"id":"inv-i3","client":"I3사","amount_krw":11000000,"issued_at":1779499876869,"due_at":1782091876869,"memo":""}}
-{"ts":1779499876869,"type":"invoice.created","payload":{"id":"inv-i4","client":"I4사","amount_krw":12000000,"issued_at":1779499876869,"due_at":1782091876869,"memo":""}}
-{"ts":1779586276869,"type":"invoice.sent","payload":{"id":"inv-i4","sent_at":1779586276869}}
-{"ts":1779499876869,"type":"invoice.created","payload":{"id":"inv-i5","client":"I5사","amount_krw":13000000,"issued_at":1779499876869,"due_at":1782091876869,"memo":""}}
-{"ts":1779586276869,"type":"invoice.sent","payload":{"id":"inv-i5","sent_at":1779586276869}}
-{"ts":1779672676869,"type":"invoice.cancelled","payload":{"id":"inv-i5","cancelled_at":1779672676869,"reason":"첫 번째 취소"}}
+{"ts":1779621182911,"type":"invoice.created","payload":{"id":"inv-draft","client":"A사","amount_krw":1000000,"issued_at":1779621182911,"due_at":1782213182911,"memo":""}}
+{"ts":1779621182911,"type":"invoice.created","payload":{"id":"inv-sent","client":"B사","amount_krw":2000000,"issued_at":1779621182911,"due_at":1782213182911,"memo":""}}
+{"ts":1779707582911,"type":"invoice.sent","payload":{"id":"inv-sent","sent_at":1779707582911}}
+{"ts":1779621182911,"type":"invoice.created","payload":{"id":"inv-partial","client":"C사","amount_krw":3000000,"issued_at":1779621182911,"due_at":1782213182911,"memo":""}}
+{"ts":1779707582911,"type":"invoice.sent","payload":{"id":"inv-partial","sent_at":1779707582911}}
+{"ts":1780053182911,"type":"invoice.payment.received","payload":{"id":"inv-partial","paid_amount_krw":1000000,"paid_at":1780053182911,"method":"bank-transfer"}}
+{"ts":1779621182911,"type":"invoice.created","payload":{"id":"inv-paid","client":"D사","amount_krw":4000000,"issued_at":1779621182911,"due_at":1782213182911,"memo":""}}
+{"ts":1779707582911,"type":"invoice.sent","payload":{"id":"inv-paid","sent_at":1779707582911}}
+{"ts":1780053182911,"type":"invoice.payment.received","payload":{"id":"inv-paid","paid_amount_krw":4000000,"paid_at":1780053182911,"method":"bank-transfer"}}
+{"ts":1779621182911,"type":"invoice.created","payload":{"id":"inv-cancelled","client":"E사","amount_krw":5000000,"issued_at":1779621182911,"due_at":1782213182911,"memo":""}}
+{"ts":1779707582911,"type":"invoice.sent","payload":{"id":"inv-cancelled","sent_at":1779707582911}}
+{"ts":1779793982911,"type":"invoice.cancelled","payload":{"id":"inv-cancelled","cancelled_at":1779793982911,"reason":"클라이언트 요청"}}
+{"ts":1774437182911,"type":"invoice.created","payload":{"id":"inv-overdue","client":"F사","amount_krw":6000000,"issued_at":1774437182911,"due_at":1778757182911,"memo":""}}
+{"ts":1774869182911,"type":"invoice.sent","payload":{"id":"inv-overdue","sent_at":1774869182911}}
+{"ts":1779621182911,"type":"invoice.created","payload":{"id":"inv-flow-1","client":"X사","amount_krw":7000000,"issued_at":1779621182911,"due_at":1782213182911,"memo":""}}
+{"ts":1779707582911,"type":"invoice.sent","payload":{"id":"inv-flow-1","sent_at":1779707582911}}
+{"ts":1780053182911,"type":"invoice.payment.received","payload":{"id":"inv-flow-1","paid_amount_krw":3500000,"paid_at":1780053182911,"method":"bank-transfer"}}
+{"ts":1780485182911,"type":"invoice.payment.received","payload":{"id":"inv-flow-1","paid_amount_krw":3500000,"paid_at":1780485182911,"method":"bank-transfer"}}
+{"ts":1779621182911,"type":"invoice.created","payload":{"id":"inv-flow-2","client":"Y사","amount_krw":8000000,"issued_at":1779621182911,"due_at":1782213182911,"memo":""}}
+{"ts":1779707582911,"type":"invoice.cancelled","payload":{"id":"inv-flow-2","cancelled_at":1779707582911,"reason":"작성 취소"}}
+{"ts":1779621182911,"type":"invoice.created","payload":{"id":"inv-i1","client":"I1사","amount_krw":9000000,"issued_at":1779621182911,"due_at":1782213182911,"memo":""}}
+{"ts":1779707582911,"type":"invoice.sent","payload":{"id":"inv-i1","sent_at":1779707582911}}
+{"ts":1779793982911,"type":"invoice.payment.received","payload":{"id":"inv-i1","paid_amount_krw":9000000,"paid_at":1779793982911,"method":"bank-transfer"}}
+{"ts":1779621182911,"type":"invoice.created","payload":{"id":"inv-i2","client":"I2사","amount_krw":10000000,"issued_at":1779621182911,"due_at":1782213182911,"memo":""}}
+{"ts":1779707582911,"type":"invoice.sent","payload":{"id":"inv-i2","sent_at":1779707582911}}
+{"ts":1779793982911,"type":"invoice.cancelled","payload":{"id":"inv-i2","cancelled_at":1779793982911,"reason":"클라이언트 취소"}}
+{"ts":1779621182911,"type":"invoice.created","payload":{"id":"inv-i3","client":"I3사","amount_krw":11000000,"issued_at":1779621182911,"due_at":1782213182911,"memo":""}}
+{"ts":1779621182911,"type":"invoice.created","payload":{"id":"inv-i4","client":"I4사","amount_krw":12000000,"issued_at":1779621182911,"due_at":1782213182911,"memo":""}}
+{"ts":1779707582911,"type":"invoice.sent","payload":{"id":"inv-i4","sent_at":1779707582911}}
+{"ts":1779621182911,"type":"invoice.created","payload":{"id":"inv-i5","client":"I5사","amount_krw":13000000,"issued_at":1779621182911,"due_at":1782213182911,"memo":""}}
+{"ts":1779707582911,"type":"invoice.sent","payload":{"id":"inv-i5","sent_at":1779707582911}}
+{"ts":1779793982911,"type":"invoice.cancelled","payload":{"id":"inv-i5","cancelled_at":1779793982911,"reason":"첫 번째 취소"}}

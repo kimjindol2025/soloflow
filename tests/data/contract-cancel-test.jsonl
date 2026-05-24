@@ -1,0 +1,4 @@
+{"ts":1779621190034,"type":"contract.created","payload":{"id":"ctr-001","title":"웹사이트 리뉴얼 계약","party_a":"발주사","party_b":"수행사","scope":"사이트 구축","period_start":1779621190034,"period_end":1784805190034,"amount_krw":5000000,"vat_included":true,"payment_terms":"계약금 30%","memo":"테스트 계약","template_id":null}}
+{"ts":1779621191034,"type":"contract.cancelled","payload":{"id":"ctr-001","cancelled_at":1779621191034}}
+{"ts":1779621192034,"type":"contract.created","payload":{"id":"ctr-002","title":"서명된 계약","party_a":"발주사","party_b":"수행사","scope":"범위","period_start":1779621190034,"period_end":1784805190034,"amount_krw":3000000,"vat_included":false,"payment_terms":"계약금 50%","memo":"","template_id":null}}
+{"ts":1779621193034,"type":"contract.signed","payload":{"id":"ctr-002","signer_name":"김대리","signer_role":"을","signed_at":1779621193034,"note":""}}

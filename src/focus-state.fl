@@ -7,6 +7,9 @@
   (let [override (env-get "SOLOFLOW_FOCUS_EVENTS_PATH")]
     (if (or (nil? override) (str-blank? override)) "data/focus-events.jsonl" override)))
 
+; ── 계측: read-focus-events 호출 횟수 ──────────────────────────
+(define READ-FOCUS-EVENTS-COUNT (atom 0))
+
 ; ── 이벤트 append ──────────────────────────────────────────────
 (defn append-focus-event [type payload]
   (let [ev {"ts" (now-ms) "type" type "payload" payload}
@@ -14,14 +17,15 @@
     (file-append FOCUS-EVENTS-PATH line)
     ev))
 
-; ── 전체 이벤트 읽기 ───────────────────────────────────────────
+; ── 전체 이벤트 읽기 (계측 포함) ───────────────────────────────
 (defn read-focus-events []
-  (if (not (file-exists FOCUS-EVENTS-PATH))
-    []
-    (let [raw (file-read FOCUS-EVENTS-PATH)
-          lines (str-lines raw)
-          non-empty (filter (fn [l] (not (str-blank? l))) lines)]
-      (map (fn [l] (json-parse l)) non-empty))))
+  (do (swap! READ-FOCUS-EVENTS-COUNT + 1)
+      (if (not (file-exists FOCUS-EVENTS-PATH))
+        []
+        (let [raw (file-read FOCUS-EVENTS-PATH)
+              lines (str-lines raw)
+              non-empty (filter (fn [l] (not (str-blank? l))) lines)]
+          (map (fn [l] (json-parse l)) non-empty)))))
 
 (defn focus-events-of-type [type]
   (filter (fn [e] (= (get e "type") type)) (read-focus-events)))
@@ -31,51 +35,58 @@
     (fn [e] (= (get (get e "payload") "session_id") session-id))
     (read-focus-events)))
 
-; ── Active Session 식별 ────────────────────────────────────────
+; ── Active Session 식별 (이미 필터된 evs에서) ──────────────────
 ; active = focus.started 있고, 같은 session_id로 completed/cancelled 없음
-(defn active-session []
-  (let [all-evs (read-focus-events)
-        started-list (filter (fn [e] (= (get e "type") "focus.started")) all-evs)
-        sorted-started (reverse started-list)  ; 최근 순
-        completed-list (filter (fn [e] (= (get e "type") "focus.completed")) all-evs)
-        cancelled-list (filter (fn [e] (= (get e "type") "focus.cancelled")) all-evs)]
-    (let [result (first
-                   (filter
-                     (fn [s-ev]
-                       (let [sid (get (get s-ev "payload") "id")
-                             has-complete (> (length (filter (fn [c] (= (get (get c "payload") "session_id") sid)) completed-list)) 0)
-                             has-cancel (> (length (filter (fn [c] (= (get (get c "payload") "session_id") sid)) cancelled-list)) 0)]
-                         (and (not has-complete) (not has-cancel))))
-                     sorted-started))]
-      result)))
+(defn active-session-from-events [evs]
+  (let [started-list (filter (fn [e] (= (get e "type") "focus.started")) evs)
+        sorted-started (reverse started-list)
+        completed-list (filter (fn [e] (= (get e "type") "focus.completed")) evs)
+        cancelled-list (filter (fn [e] (= (get e "type") "focus.cancelled")) evs)]
+    (first
+      (filter
+        (fn [s-ev]
+          (let [sid (get (get s-ev "payload") "id")
+                has-complete (> (length (filter (fn [c] (= (get (get c "payload") "session_id") sid)) completed-list)) 0)
+                has-cancel (> (length (filter (fn [c] (= (get (get c "payload") "session_id") sid)) cancelled-list)) 0)]
+            (and (not has-complete) (not has-cancel))))
+        sorted-started))))
 
-; ── Session 일시정지 상태 확인 ──────────────────────────────────
+; ── backward-compat wrapper: active-session() ──────────────────
+(defn active-session []
+  (let [evs (read-focus-events)]
+    (active-session-from-events evs)))
+
+; ── Session 일시정지 상태 확인 (이미 필터된 evs에서) ──────────────
 ; paused? = 마지막 pause/resume 이벤트가 focus.paused
-(defn session-paused? [session-id]
-  (let [evs (focus-events-for-session session-id)
+(defn session-paused-from-events? [session-id evs]
+  (let [session-evs (filter (fn [e] (= (get (get e "payload") "session_id") session-id)) evs)
         pause-resume (filter
                        (fn [e]
                          (let [t (get e "type")]
                            (or (= t "focus.paused") (= t "focus.resumed"))))
-                       evs)]
+                       session-evs)]
     (if (= (length pause-resume) 0)
       false
       (= (get (last pause-resume) "type") "focus.paused"))))
 
-; ── 오늘 완료된 Session 목록 ────────────────────────────────────
-(defn today-sessions []
-  (let [all-evs (read-focus-events)
-        today-start (date-parse (date-format (now-ms) "yyyy-MM-dd"))
+; ── backward-compat wrapper: session-paused? ──────────────────
+(defn session-paused? [session-id]
+  (let [evs (read-focus-events)]
+    (session-paused-from-events? session-id evs)))
+
+; ── 오늘 완료된 Session 목록 (이미 필터된 evs에서) ────────────────
+(defn today-sessions-from-events [evs]
+  (let [today-start (date-parse (date-format (now-ms) "yyyy-MM-dd"))
         completed (filter
                     (fn [e]
                       (and (= (get e "type") "focus.completed")
                            (>= (get e "ts") today-start)))
-                    all-evs)]
+                    evs)]
     (map
       (fn [c-ev]
         (let [payload (get c-ev "payload")
               sid (get payload "session_id")
-              started (first (filter (fn [s] (= (get (get s "payload") "id") sid)) (filter (fn [e] (= (get e "type") "focus.started")) all-evs)))]
+              started (first (filter (fn [s] (= (get (get s "payload") "id") sid)) (filter (fn [e] (= (get e "type") "focus.started")) evs)))]
           (if (nil? started)
             nil
             {"session_id" sid
@@ -86,90 +97,49 @@
              "notes" (get payload "notes")})))
       completed)))
 
-; ── 오늘 총 집중 시간 (분) ─────────────────────────────────────
-(defn today-focus-mins []
-  (let [sessions (today-sessions)
-        mins (map (fn [s] (get s "actual_mins")) sessions)]
+; ── backward-compat wrapper: today-sessions ────────────────────
+(defn today-sessions []
+  (let [evs (read-focus-events)]
+    (today-sessions-from-events evs)))
+
+; ── 오늘 총 집중 시간 (분, 세션 배열에서) ──────────────────────
+(defn today-focus-mins-from-sessions [sessions]
+  (let [mins (map (fn [s] (get s "actual_mins")) sessions)]
     (reduce + 0 mins)))
 
-; ── 모든 Habit 조회 (archived 제외) ────────────────────────────
-(defn all-habits []
-  (let [all-evs (read-focus-events)
-        created (filter (fn [e] (= (get e "type") "habit.created")) all-evs)
-        archived (filter (fn [e] (= (get e "type") "habit.archived")) all-evs)
+; ── backward-compat wrapper: today-focus-mins ──────────────────
+(defn today-focus-mins []
+  (let [sessions (today-sessions)]
+    (today-focus-mins-from-sessions sessions)))
+
+; ── 모든 Habit 조회 (archived 제외, 이미 필터된 evs에서) ───────────
+(defn all-habits-from-events [evs]
+  (let [created (filter (fn [e] (= (get e "type") "habit.created")) evs)
+        archived (filter (fn [e] (= (get e "type") "habit.archived")) evs)
         archived-ids (map (fn [e] (get (get e "payload") "habit_id")) archived)]
     (filter
       (fn [h]
         (not (> (length (filter (fn [aid] (= aid (get (get h "payload") "id"))) archived-ids)) 0)))
       created)))
 
-; ── Habit 상세 정보 ────────────────────────────────────────────
-(defn habit-detail [habit-id]
-  (let [all-evs (read-focus-events)
-        created-list (filter
-                       (fn [e]
-                         (and (= (get e "type") "habit.created")
-                              (= (get (get e "payload") "id") habit-id)))
-                       all-evs)]
-    (if (= (length created-list) 0)
-      nil
-      (let [payload (get (get created-list 0) "payload")
-            archived-list (filter
-                            (fn [e]
-                              (and (= (get e "type") "habit.archived")
-                                   (= (get (get e "payload") "habit_id") habit-id)))
-                            all-evs)]
-        {"id" habit-id
-         "title" (get payload "title")
-         "description" (get payload "description")
-         "created_at" (get (get created-list 0) "ts")
-         "archived" (> (length archived-list) 0)
-         "archived_at" (if (> (length archived-list) 0) (get (get archived-list 0) "payload") nil)
-         "checks" (effective-checks habit-id)}))))
+; ── backward-compat wrapper: all-habits ────────────────────────
+(defn all-habits []
+  (let [evs (read-focus-events)]
+    (all-habits-from-events evs)))
 
-; ── 오늘 Habit 체크 여부 (net: 마지막 이벤트가 checked) ──────────
-(defn habit-checked-today? [habit-id]
-  (let [today-str (date-format (now-ms) "yyyy-MM-dd")
-        all-evs (read-focus-events)
-        today-events (filter
-                       (fn [e]
-                         (and (or (= (get e "type") "habit.checked")
-                                  (= (get e "type") "habit.unchecked"))
-                              (= (get (get e "payload") "habit_id") habit-id)
-                              (= (get (get e "payload") "date") today-str)))
-                       all-evs)]
-    (if (= (length today-events) 0)
-      false
-      (= (get (last today-events) "type") "habit.checked"))))
-
-; ── Habit 연속 체크 일 수 (Streak) ─────────────────────────────
-; 오늘부터 거슬러 연속 체크된 날 개수 (오늘 미체크면 어제부터)
-(defn habit-streak [habit-id]
-  (let [checks (effective-checks habit-id)
-        today-str (date-format (now-ms) "yyyy-MM-dd")
-        today-ms (date-parse today-str)
-        day-ms 86400000
-        check-set (reduce (fn [acc d] (assoc acc d true)) {} checks)]
-    (loop [count 0 current-offset 0]
-      (let [check-date (date-format (- today-ms (* day-ms current-offset)) "yyyy-MM-dd")]
-        (if (nil? (get check-set check-date))
-          count
-          (recur (+ count 1) (+ current-offset 1)))))))
-
-; ── Habit 실제 체크 날짜 목록 (check 미만 uncheck 필터링) ───────
-; 각 날짜별로 마지막 check/uncheck 이벤트가 checked 인 날짜들
-(defn effective-checks [habit-id]
-  (let [all-evs (read-focus-events)
-        check-evs (filter
+; ── Habit 실제 체크 날짜 목록 (이미 필터된 evs에서) ──────────────
+; check 미만 uncheck 필터링. 각 날짜별 마지막 이벤트가 checked 인 날짜들
+(defn effective-checks-from-events [habit-id evs]
+  (let [check-evs (filter
                     (fn [e]
                       (and (= (get e "type") "habit.checked")
                            (= (get (get e "payload") "habit_id") habit-id)))
-                    all-evs)
+                    evs)
         uncheck-evs (filter
                       (fn [e]
                         (and (= (get e "type") "habit.unchecked")
                              (= (get (get e "payload") "habit_id") habit-id)))
-                      all-evs)
+                      evs)
         all-dates (reduce
                     (fn [acc ev]
                       (let [date (get (get ev "payload") "date")]
@@ -187,6 +157,77 @@
                 last-ev (last (sort-by (fn [e] (get e "ts")) all-date-evs))]
             (= (get last-ev "type") "habit.checked")))
         (keys all-dates)))))
+
+; ── backward-compat wrapper: effective-checks ───────────────────
+(defn effective-checks [habit-id]
+  (let [evs (read-focus-events)]
+    (effective-checks-from-events habit-id evs)))
+
+; ── Habit 상세 정보 (이미 필터된 evs에서) ──────────────────────
+(defn habit-detail-from-events [habit-id evs]
+  (let [created-list (filter
+                       (fn [e]
+                         (and (= (get e "type") "habit.created")
+                              (= (get (get e "payload") "id") habit-id)))
+                       evs)]
+    (if (= (length created-list) 0)
+      nil
+      (let [payload (get (get created-list 0) "payload")
+            archived-list (filter
+                            (fn [e]
+                              (and (= (get e "type") "habit.archived")
+                                   (= (get (get e "payload") "habit_id") habit-id)))
+                            evs)]
+        {"id" habit-id
+         "title" (get payload "title")
+         "description" (get payload "description")
+         "created_at" (get (get created-list 0) "ts")
+         "archived" (> (length archived-list) 0)
+         "archived_at" (if (> (length archived-list) 0) (get (get archived-list 0) "payload") nil)
+         "checks" (effective-checks-from-events habit-id evs)}))))
+
+; ── backward-compat wrapper: habit-detail ──────────────────────
+(defn habit-detail [habit-id]
+  (let [evs (read-focus-events)]
+    (habit-detail-from-events habit-id evs)))
+
+; ── 오늘 Habit 체크 여부 (이미 필터된 evs에서) ──────────────────
+; net: 마지막 이벤트가 checked
+(defn habit-checked-today-from-events? [habit-id evs]
+  (let [today-str (date-format (now-ms) "yyyy-MM-dd")
+        today-events (filter
+                       (fn [e]
+                         (and (or (= (get e "type") "habit.checked")
+                                  (= (get e "type") "habit.unchecked"))
+                              (= (get (get e "payload") "habit_id") habit-id)
+                              (= (get (get e "payload") "date") today-str)))
+                       evs)]
+    (if (= (length today-events) 0)
+      false
+      (= (get (last today-events) "type") "habit.checked"))))
+
+; ── backward-compat wrapper: habit-checked-today? ──────────────
+(defn habit-checked-today? [habit-id]
+  (let [evs (read-focus-events)]
+    (habit-checked-today-from-events? habit-id evs)))
+
+; ── Habit 연속 체크 일 수 (checks 배열에서) ────────────────────
+; 오늘부터 거슬러 연속 체크된 날 개수 (오늘 미체크면 어제부터)
+(defn habit-streak-from-checks [checks]
+  (let [today-str (date-format (now-ms) "yyyy-MM-dd")
+        today-ms (date-parse today-str)
+        day-ms 86400000
+        check-set (reduce (fn [acc d] (assoc acc d true)) {} checks)]
+    (loop [count 0 current-offset 0]
+      (let [check-date (date-format (- today-ms (* day-ms current-offset)) "yyyy-MM-dd")]
+        (if (nil? (get check-set check-date))
+          count
+          (recur (+ count 1) (+ current-offset 1)))))))
+
+; ── backward-compat wrapper: habit-streak ──────────────────────
+(defn habit-streak [habit-id]
+  (let [checks (effective-checks habit-id)]
+    (habit-streak-from-checks checks)))
 
 ; ── ID 생성 ────────────────────────────────────────────────────
 (defn make-session-id []

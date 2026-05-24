@@ -1,0 +1,88 @@
+; soloflow live-test.fl — v1.1-B 라이브 테스트
+; 실행: node /root/kim/freelang-v11/bootstrap.js run tests/live-test.fl
+
+(println "════════════════════════════════════════")
+(println "soloflow v1.1-B 라이브 테스트")
+(println "════════════════════════════════════════")
+(println "")
+
+; ── Test 1: GET /template/list (seed 자동 생성) ──────────
+(println "[1] GET /template/list (seed 자동 생성)")
+(let [resp (http-get "http://localhost:41955/template/list")]
+  (if (= (get resp "status") 200)
+    (do
+      (println "  ✓ Status: 200 OK")
+      (let [body (get resp "body")]
+        (if (str-includes body "계약 템플릿")
+          (println "  ✓ 페이지 제목 있음")
+          (println "  ✗ 페이지 제목 없음"))
+        (if (str-includes body "template/list")
+          (println "  ✓ 네비게이션 있음")
+          (println "  ✗ 네비게이션 없음"))))
+    (println (str "  ✗ Status: " (get resp "status")))))
+
+(println "")
+
+; ── Test 2: POST /template/create (신규 생성) ──────────────
+(println "[2] POST /template/create (신규 생성)")
+(let [body-form "title=커스텀테스트&category=contract.minimal&body_text=테스트본문{{party_a}}"
+      resp (http-post "http://localhost:41955/template/create" body-form)]
+  (println (str "  Status: " (get resp "status")))
+  (if (= (get resp "status") 302)
+    (println "  ✓ Redirect 302 (성공)")
+    (println (str "  ✗ Redirect 실패. Headers: " (get resp "headers")))))
+
+(println "")
+
+; ── Test 3: GET /contracts/new (template dropdown) ───────
+(println "[3] GET /contracts/new (template dropdown)")
+(let [resp (http-get "http://localhost:41955/contracts/new")]
+  (if (= (get resp "status") 200)
+    (do
+      (println "  ✓ Status: 200 OK")
+      (let [body (get resp "body")]
+        (if (str-includes body "template_id")
+          (println "  ✓ template_id select 있음")
+          (println "  ✗ template_id select 없음"))
+        (if (str-includes body "기본 선택")
+          (println "  ✓ 기본 선택 옵션 있음")
+          (println "  ✗ 기본 선택 옵션 없음"))))
+    (println (str "  ✗ Status: " (get resp "status")))))
+
+(println "")
+
+; ── Test 4: POST /contracts (template_id 포함 생성) ──────
+(println "[4] POST /contracts (template_id 포함)")
+(let [form-data "title=테스트계약&party_a=갑&party_b=을&period_start=2026-05-23&period_end=2026-11-23&amount_krw=100000&template_id=tmpl-minimal&payment_terms=즉시&scope=테스트"
+      resp (http-post "http://localhost:41955/contracts" form-data)]
+  (println (str "  Status: " (get resp "status")))
+  (if (or (= (get resp "status") 302) (= (get resp "status") 200))
+    (println "  ✓ 계약 생성 성공")
+    (println (str "  ✗ 계약 생성 실패"))))
+
+(println "")
+
+; ── Test 5: 데이터 파일 검증 ──────────────────────────────
+(println "[5] 데이터 파일 검증")
+(if (file-exists "data/template-events.jsonl")
+  (let [content (file-read "data/template-events.jsonl")
+        lines (str-lines content)
+        non-empty (filter (fn [l] (not (str-blank? l))) lines)]
+    (println (str "  ✓ template-events.jsonl 생성됨 (" (length non-empty) " events)"))
+    (if (> (length non-empty) 0)
+      (println "  ✓ 이벤트 기록됨")))
+  (println "  ✗ template-events.jsonl 없음"))
+
+(if (file-exists "data/contract-events.jsonl")
+  (let [content (file-read "data/contract-events.jsonl")
+        lines (str-lines content)
+        non-empty (filter (fn [l] (not (str-blank? l))) lines)]
+    (println (str "  ✓ contract-events.jsonl 생성됨 (" (length non-empty) " events)"))
+    (if (> (length non-empty) 0)
+      (println "  ✓ 계약 이벤트 기록됨")))
+  (println "  ✗ contract-events.jsonl 없음"))
+
+(println "")
+(println "════════════════════════════════════════")
+(println "라이브 테스트 완료")
+(println "════════════════════════════════════════")

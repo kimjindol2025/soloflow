@@ -24,8 +24,8 @@
 
 | 계층 | 선택 |
 |------|------|
-| **Language** | FreeLang v11 (.fl) only — zero-dep |
-| **Runtime** | Node.js (freelang-v11 bootstrap.js) |
+| **Language** | FreeLang v11 (.fl) — 코드 순수(다른 언어 0줄), 외부 npm 0개 |
+| **Runtime** | Node.js 위의 freelang-v11 인터프리터 (bootstrap.js로 구동) |
 | **Storage** | JSONL (append-only event log) — `data/*.jsonl` |
 | **Render** | 순수 SSR (server-html/form-field/form-num) — JS 0줄 |
 | **Server** | Node.js HTTP (port 41955) |

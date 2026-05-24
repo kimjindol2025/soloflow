@@ -1,0 +1,87 @@
+; soloflow live-verify.fl — v1.1-B 프로젝션 검증
+; 실행: node /root/kim/freelang-v11/bootstrap.js run tests/live-verify.fl
+
+(load "src/render.fl")
+(load "src/template-state.fl")
+(load "src/contract-template.fl")
+
+(println "════════════════════════════════════════")
+(println "soloflow v1.1-B 프로젝션 검증")
+(println "════════════════════════════════════════")
+(println "")
+
+; ── 1. Seed 템플릿 확인 ─────────────────────────────────────
+(println "[1] Seed 템플릿 확인")
+(let [actives (active-templates)
+      count (length actives)]
+  (println (str "  ✓ active-templates: " count " 개"))
+  (map (fn [t]
+    (let [id (get (get t "payload") "template_id")
+          title (get (get t "payload") "title")]
+      (println (str "    - " id ": " title))))
+    actives))
+
+(println "")
+
+; ── 2. Template-detail 조회 ────────────────────────────────
+(println "[2] Template-detail 조회")
+(let [detail (template-detail "tmpl-minimal")]
+  (println (str "  ✓ template_id: " (get detail "template_id")))
+  (println (str "  ✓ title: " (get detail "title")))
+  (println (str "  ✓ version: v" (str (get detail "version"))))
+  (println (str "  ✓ archived: " (get detail "archived"))))
+
+(println "")
+
+; ── 3. Selected-template 조회 ──────────────────────────────
+(println "[3] Selected-template (기본 선택)")
+(let [sel (selected-template)]
+  (if (nil? sel)
+    (println "  - 아직 선택 없음 (초기 상태)")
+    (println (str "  ✓ 기본 템플릿: " (get sel "template_id") " (" (get sel "title") ")"))))
+
+(println "")
+
+; ── 4. Select-contract-template 통합 검증 ─────────────────
+(println "[4] Select-contract-template 통합")
+(let [contract {"party_a" "ABC회사" "party_b" "XYZ회사"
+                "title" "웹사이트 개발 용역계약"
+                "scope" "반응형 웹사이트 개발 + 유지보수"
+                "period_start" (- (now-ms) 86400000)
+                "period_end" (+ (now-ms) 7776000000)
+                "amount_krw" 5000000
+                "vat_included" false
+                "payment_terms" "계약금 30%, 중도금 30%, 잔금 40%"
+                "memo" "소수점 없음"
+                "created_at" (now-ms)}
+      rendered (select-contract-template "tmpl-minimal" contract)]
+  (println (str "  ✓ 렌더링 완료 (" (length rendered) " bytes)"))
+  (if (str-includes rendered "ABC회사")
+    (println "  ✓ 변수 치환: party_a 적용됨")
+    (println "  ✗ 변수 치환: party_a 실패"))
+  (if (str-includes rendered "웹사이트 개발 용역계약")
+    (println "  ✓ 변수 치환: title 적용됨")
+    (println "  ✗ 변수 치환: title 실패"))
+  (if (str-includes rendered "5,000,000")
+    (println "  ✓ 금액 포맷: 3자리 구분 적용됨")
+    (println "  ✗ 금액 포맷 실패")))
+
+(println "")
+
+; ── 5. 이벤트 통계 ────────────────────────────────────────
+(println "[5] 이벤트 통계")
+(let [all-evs (read-template-events)
+      created (template-events-of-type "template.created")
+      updated (template-events-of-type "template.updated")
+      archived (template-events-of-type "template.archived")
+      selected (template-events-of-type "template.selected")]
+  (println (str "  총 이벤트: " (length all-evs)))
+  (println (str "  - template.created: " (length created)))
+  (println (str "  - template.updated: " (length updated)))
+  (println (str "  - template.archived: " (length archived)))
+  (println (str "  - template.selected: " (length selected))))
+
+(println "")
+(println "════════════════════════════════════════")
+(println "✅ v1.1-B 라이브 프로젝션 검증 완료")
+(println "════════════════════════════════════════")

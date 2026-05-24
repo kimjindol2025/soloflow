@@ -1,0 +1,6 @@
+{"ts":1779621182407,"type":"invoice.created","payload":{"id":"inv-001","client":"A사","amount_krw":1000000,"issued_at":1779621182407,"due_at":1782213182407,"memo":""}}
+{"ts":1779621183407,"type":"invoice.sent","payload":{"id":"inv-001","sent_at":1779621183407}}
+{"ts":1779621184407,"type":"invoice.payment.received","payload":{"id":"inv-001","paid_amount_krw":500000,"paid_at":1779621184407,"method":"bank"}}
+{"ts":1779621185407,"type":"invoice.created","payload":{"id":"inv-002","client":"B사","amount_krw":500000,"issued_at":1779621185407,"due_at":1782213182407,"memo":""}}
+{"ts":1779621186407,"type":"invoice.sent","payload":{"id":"inv-002","sent_at":1779621186407}}
+{"ts":1779621187407,"type":"invoice.created","payload":{"id":"inv-003","client":"C사","amount_krw":300000,"issued_at":1779621187407,"due_at":1782213182407,"memo":""}}
