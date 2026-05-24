@@ -1,0 +1,6 @@
+{"ts":1779623518481,"type":"schedule.project-created","payload":{"id":"sch-001","title":"프로젝트1","start_date":1779623518447,"end_date":1782215518447,"description":"테스트 프로젝트"}}
+{"ts":1779623539471,"type":"schedule.project-created","payload":{"id":"sch-001","title":"프로젝트1","start_date":1779623539443,"end_date":1782215539443,"description":"테스트 프로젝트"}}
+{"ts":1779623576508,"type":"schedule.project-created","payload":{"id":"sch-001","title":"프로젝트1","start_date":1779623576468,"end_date":1782215576468,"description":"테스트 프로젝트"}}
+{"ts":1779623615565,"type":"schedule.project-created","payload":{"id":"sch-001","title":"프로젝트1","start_date":1779623615537,"end_date":1782215615537,"description":"테스트 프로젝트"}}
+{"ts":1779623626467,"type":"schedule.project-created","payload":{"id":"sch-001","title":"프로젝트1","start_date":1779623626269,"end_date":1782215626269,"description":"테스트 프로젝트"}}
+{"ts":1779623652602,"type":"schedule.project-created","payload":{"id":"sch-001","title":"프로젝트1","start_date":1779623652575,"end_date":1782215652575,"description":"테스트 프로젝트"}}

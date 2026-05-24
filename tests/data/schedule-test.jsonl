@@ -1,11 +1,11 @@
-{"ts":1777028023494,"type":"schedule.project-created","payload":{"id":"prj-001","title":"Q2 마케팅","start_date":1777028023494,"end_date":1782212023494,"description":"분기별 마케팅 계획"}}
-{"ts":1779620023494,"type":"schedule.milestone-added","payload":{"project_id":"prj-001","milestone_id":"mile-001","title":"SNS 캠페인 런칭","target_date":1780829623494,"description":"인스타그램, 페이스북"}}
-{"ts":1779620023494,"type":"schedule.milestone-added","payload":{"project_id":"prj-001","milestone_id":"mile-002","title":"블로그 포스팅 완료","target_date":1781434423494,"description":"10개 포스트"}}
-{"ts":1780224823494,"type":"schedule.milestone-completed","payload":{"project_id":"prj-001","milestone_id":"mile-001","completed_at":1780224823494}}
-{"ts":1779620023494,"type":"schedule.focus-window-started","payload":{"project_id":"prj-001","focus_id":"focus-001","started_at":1779620023494,"planned_duration_mins":120}}
-{"ts":1779620023494,"type":"schedule.focus-window-ended","payload":{"project_id":"prj-001","focus_id":"focus-001","ended_at":1779620023494,"actual_duration_mins":110,"completed_tasks":3}}
-{"ts":1778756023494,"type":"schedule.project-created","payload":{"id":"prj-002","title":"개발 로드맵","start_date":1778756023494,"end_date":1781348023494,"description":"API v2 개발"}}
-{"ts":1779620023494,"type":"schedule.milestone-added","payload":{"project_id":"prj-002","milestone_id":"mile-201","title":"API 설계","target_date":1780052023494,"description":"OpenAPI"}}
-{"ts":1778756023494,"type":"schedule.focus-window-started","payload":{"project_id":"prj-001","focus_id":"focus-old","started_at":1778756023494,"planned_duration_mins":60}}
-{"ts":1779706423494,"type":"schedule.focus-window-started","payload":{"project_id":"prj-001","focus_id":"focus-future","started_at":1779706423494,"planned_duration_mins":90}}
-{"ts":1779620023494,"type":"schedule.focus-window-started","payload":{"project_id":"prj-001","focus_id":"focus-today","started_at":1779620023494,"planned_duration_mins":75}}
+{"ts":1777031697655,"type":"schedule.project-created","payload":{"id":"prj-001","title":"Q2 마케팅","start_date":1777031697655,"end_date":1782215697655,"description":"분기별 마케팅 계획"}}
+{"ts":1779623697655,"type":"schedule.milestone-added","payload":{"project_id":"prj-001","milestone_id":"mile-001","title":"SNS 캠페인 런칭","target_date":1780833297655,"description":"인스타그램, 페이스북"}}
+{"ts":1779623697655,"type":"schedule.milestone-added","payload":{"project_id":"prj-001","milestone_id":"mile-002","title":"블로그 포스팅 완료","target_date":1781438097655,"description":"10개 포스트"}}
+{"ts":1780228497655,"type":"schedule.milestone-completed","payload":{"project_id":"prj-001","milestone_id":"mile-001","completed_at":1780228497655}}
+{"ts":1779623697655,"type":"schedule.focus-window-started","payload":{"project_id":"prj-001","focus_id":"focus-001","started_at":1779623697655,"planned_duration_mins":120}}
+{"ts":1779623697655,"type":"schedule.focus-window-ended","payload":{"project_id":"prj-001","focus_id":"focus-001","ended_at":1779623697655,"actual_duration_mins":110,"completed_tasks":3}}
+{"ts":1778759697655,"type":"schedule.project-created","payload":{"id":"prj-002","title":"개발 로드맵","start_date":1778759697655,"end_date":1781351697655,"description":"API v2 개발"}}
+{"ts":1779623697655,"type":"schedule.milestone-added","payload":{"project_id":"prj-002","milestone_id":"mile-201","title":"API 설계","target_date":1780055697655,"description":"OpenAPI"}}
+{"ts":1778759697655,"type":"schedule.focus-window-started","payload":{"project_id":"prj-001","focus_id":"focus-old","started_at":1778759697655,"planned_duration_mins":60}}
+{"ts":1779710097655,"type":"schedule.focus-window-started","payload":{"project_id":"prj-001","focus_id":"focus-future","started_at":1779710097655,"planned_duration_mins":90}}
+{"ts":1779623697655,"type":"schedule.focus-window-started","payload":{"project_id":"prj-001","focus_id":"focus-today","started_at":1779623697655,"planned_duration_mins":75}}

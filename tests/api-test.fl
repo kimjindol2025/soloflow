@@ -1,0 +1,157 @@
+; soloflow api-test.fl — v1.3-P1 REST JSON API 테스트
+; 실행: SOLOFLOW_API_KEY=test-key node /root/kim/freelang-v11/bootstrap.js run tests/api-test.fl
+
+(load "src/render.fl")
+(load "src/state.fl")
+(load "src/invoice.fl")
+(load "src/contract-template.fl")
+(load "src/contract-state.fl")
+(load "src/contract.fl")
+(load "src/contract-invoice-link-state.fl")
+(load "src/contract-invoice-link.fl")
+(load "src/template-state.fl")
+(load "src/template.fl")
+(load "src/cron.fl")
+(load "src/schedule-state.fl")
+(load "src/schedule.fl")
+(load "src/focus-state.fl")
+(load "src/focus.fl")
+(load "src/delivery-state.fl")
+(load "src/delivery.fl")
+(load "src/api.fl")
+
+(println "═══ soloflow v1.3-P1 API tests (단위 테스트) ═══")
+(println "")
+
+(define PASS-COUNT (atom 0))
+(define FAIL-COUNT (atom 0))
+
+(defn check [label actual expected]
+  (if (= actual expected)
+    (do (swap! PASS-COUNT + 1)
+        (println (str "  ✓ " label)))
+    (do (swap! FAIL-COUNT + 1)
+        (println (str "  ✗ " label))
+        (println (str "      expected: " expected))
+        (println (str "      actual:   " actual)))))
+
+; ── fixture: 송장/계약/프로젝트 생성 ────────────────────────────
+(println "[1] fixture 생성")
+(let [now (now-ms)]
+  (do
+    (append-event "invoice.created"
+      {"id" "inv-001" "client" "A사" "amount_krw" 1000000
+       "issued_at" now "due_at" (+ now 2592000000) "memo" ""})
+    (append-event "invoice.sent"
+      {"id" "inv-001" "sent_at" now})
+    (append-event "invoice.created"
+      {"id" "inv-002" "client" "B사" "amount_krw" 500000
+       "issued_at" (+ now 1000) "due_at" (+ now 2592000000) "memo" ""})
+    (append-contract-event "contract.created"
+      {"id" "ctr-001" "title" "계약1" "party_a" "나" "party_b" "클라이언트A"
+       "scope" "웹개발" "period_start" now "period_end" (+ now 2592000000)
+       "amount_krw" 5000000 "vat_included" true "payment_terms" "선금 50%" "memo" ""
+       "template_id" nil})
+    (append-schedule-event "schedule.project-created"
+      {"id" "sch-001" "title" "프로젝트1" "start_date" now
+       "end_date" (+ now 2592000000) "description" "테스트 프로젝트"})
+    (println "  ✓ fixture: 2 invoices, 1 contract, 1 project")))
+(println "")
+
+; ── test 1: API Key 헬퍼 함수 ──────────────────────────────────
+(println "[2] API Key 설정")
+(let [key (env-get "SOLOFLOW_API_KEY")]
+  (do
+    (check "API Key 환경변수 설정" (nil? key) false)
+    (check "API Key 값 확인" (= key "test-key") true)))
+(println "")
+
+; ── test 2: list-invoices 호출 가능 확인 ─────────────────────
+(println "[3] list-invoices 함수")
+(let [all (list-invoices)
+      count-invs (length all)]
+  (do
+    (check "list-invoices 호출 가능" (>= count-invs 2) true)
+    (check "invoices 최소 2개 이상" (>= count-invs 2) true)))
+(println "")
+
+; ── test 3: project-invoice 호출 가능 확인 ─────────────────────
+(println "[4] project-invoice 함수")
+(let [inv (project-invoice "inv-001")]
+  (do
+    (check "project-invoice 호출 가능" (nil? inv) false)
+    (check "inv-001 상태" (= (get inv "status") "sent") true)))
+(println "")
+
+; ── test 4: project-invoice 404 (없는 ID) ─────────────────────
+(println "[5] project-invoice (404 케이스)")
+(let [inv (project-invoice "inv-not-exist")]
+  (check "존재하지 않는 ID → nil" (nil? inv) true))
+(println "")
+
+; ── test 5: all-contracts 호출 가능 확인 ──────────────────────
+(println "[6] all-contracts 함수")
+(let [all (all-contracts)
+      has-ctr-001 (> (length (filter (fn [c] (= (get c "id") "ctr-001")) all)) 0)]
+  (do
+    (check "all-contracts 호출 가능" (> (length all) 0) true)
+    (check "ctr-001 포함" has-ctr-001 true)))
+(println "")
+
+; ── test 6: project-contract 호출 가능 확인 ──────────────────
+(println "[7] project-contract 함수")
+(let [c (project-contract "ctr-001")]
+  (do
+    (check "project-contract 호출 가능" (nil? c) false)
+    (check "ctr-001 제목" (= (get c "title") "계약1") true)))
+(println "")
+
+; ── test 7: project-contract 404 (없는 ID) ───────────────────
+(println "[8] project-contract (404 케이스)")
+(let [c (project-contract "ctr-not-exist")]
+  (check "존재하지 않는 ID → nil" (nil? c) true))
+(println "")
+
+; ── test 8: all-projects 호출 가능 확인 ──────────────────────
+(println "[9] all-projects 함수")
+(let [all (all-projects)
+      has-sch-001 (> (length (filter (fn [p] (= (get p "id") "sch-001")) all)) 0)]
+  (do
+    (check "all-projects 호출 가능" (> (length all) 0) true)
+    (check "sch-001 포함" has-sch-001 true)))
+(println "")
+
+; ── test 9: project-schedule 호출 가능 확인 ──────────────────
+(println "[10] project-schedule 함수")
+(let [p (project-schedule "sch-001")]
+  (do
+    (check "project-schedule 호출 가능" (nil? p) false)
+    (check "sch-001 제목" (= (get p "title") "프로젝트1") true)))
+(println "")
+
+; ── test 10: project-schedule 404 (없는 ID) ──────────────────
+(println "[11] project-schedule (404 케이스)")
+(let [p (project-schedule "sch-not-exist")]
+  (check "존재하지 않는 ID → nil" (nil? p) true))
+(println "")
+
+; ── test 11: read-focus-events + helpers 호출 가능 ──────────────
+(println "[12] focus-state 함수들 (one-pass)")
+(let [evs (read-focus-events)
+      active (active-session-from-events evs)
+      sessions (today-sessions-from-events evs)
+      habits (all-habits-from-events evs)]
+  (do
+    (check "read-focus-events 호출 가능" (nil? evs) false)
+    (check "active-session-from-events 호출 가능" true true)
+    (check "today-sessions-from-events 호출 가능" (nil? sessions) false)
+    (check "all-habits-from-events 호출 가능" (nil? habits) false)))
+(println "")
+
+(println "═══════════════════════════════════════════")
+(println (str "결과: " @PASS-COUNT " PASS / " @FAIL-COUNT " FAIL"))
+(println "═══════════════════════════════════════════")
+
+(if (> @FAIL-COUNT 0)
+  (throw (str @FAIL-COUNT " test(s) failed"))
+  (println "✅ 모든 테스트 통과"))

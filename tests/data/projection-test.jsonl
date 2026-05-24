@@ -1,10 +1,10 @@
-{"ts":1778757362791,"type":"invoice.created","payload":{"id":"inv-paid","client":"A사","amount_krw":1000000,"issued_at":1778757362791,"due_at":1781349362791,"memo":"paid case"}}
-{"ts":1778843762791,"type":"invoice.sent","payload":{"id":"inv-paid","sent_at":1778843762791}}
-{"ts":1779448562791,"type":"invoice.payment.received","payload":{"id":"inv-paid","paid_amount_krw":1000000,"paid_at":1779448562791,"method":"bank"}}
-{"ts":1778930162791,"type":"invoice.created","payload":{"id":"inv-partial","client":"B사","amount_krw":500000,"issued_at":1778930162791,"due_at":1781522162791,"memo":"partial"}}
-{"ts":1779016562791,"type":"invoice.sent","payload":{"id":"inv-partial","sent_at":1779016562791}}
-{"ts":1779534962791,"type":"invoice.payment.received","payload":{"id":"inv-partial","paid_amount_krw":200000,"paid_at":1779534962791,"method":"bank"}}
-{"ts":1775301362791,"type":"invoice.created","payload":{"id":"inv-overdue","client":"C사","amount_krw":300000,"issued_at":1775301362791,"due_at":1778757362791,"memo":"overdue"}}
-{"ts":1775387762791,"type":"invoice.sent","payload":{"id":"inv-overdue","sent_at":1775387762791}}
-{"ts":1779362162791,"type":"invoice.created","payload":{"id":"inv-open","client":"D사","amount_krw":400000,"issued_at":1779362162791,"due_at":1780053362791,"memo":"open this week"}}
-{"ts":1779448562791,"type":"invoice.sent","payload":{"id":"inv-open","sent_at":1779448562791}}
+{"ts":1778759696605,"type":"invoice.created","payload":{"id":"inv-paid","client":"A사","amount_krw":1000000,"issued_at":1778759696605,"due_at":1781351696605,"memo":"paid case"}}
+{"ts":1778846096605,"type":"invoice.sent","payload":{"id":"inv-paid","sent_at":1778846096605}}
+{"ts":1779450896605,"type":"invoice.payment.received","payload":{"id":"inv-paid","paid_amount_krw":1000000,"paid_at":1779450896605,"method":"bank"}}
+{"ts":1778932496605,"type":"invoice.created","payload":{"id":"inv-partial","client":"B사","amount_krw":500000,"issued_at":1778932496605,"due_at":1781524496605,"memo":"partial"}}
+{"ts":1779018896605,"type":"invoice.sent","payload":{"id":"inv-partial","sent_at":1779018896605}}
+{"ts":1779537296605,"type":"invoice.payment.received","payload":{"id":"inv-partial","paid_amount_krw":200000,"paid_at":1779537296605,"method":"bank"}}
+{"ts":1775303696605,"type":"invoice.created","payload":{"id":"inv-overdue","client":"C사","amount_krw":300000,"issued_at":1775303696605,"due_at":1778759696605,"memo":"overdue"}}
+{"ts":1775390096605,"type":"invoice.sent","payload":{"id":"inv-overdue","sent_at":1775390096605}}
+{"ts":1779364496605,"type":"invoice.created","payload":{"id":"inv-open","client":"D사","amount_krw":400000,"issued_at":1779364496605,"due_at":1780055696605,"memo":"open this week"}}
+{"ts":1779450896605,"type":"invoice.sent","payload":{"id":"inv-open","sent_at":1779450896605}}

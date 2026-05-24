@@ -1,0 +1,103 @@
+; soloflow api.fl — REST JSON API (v1.3)
+; 읽기 전용 GET 엔드포인트, API Key 인증
+
+; ── API Key 환경변수 ──────────────────────────────────────────
+(define API-KEY
+  (let [override (env-get "SOLOFLOW_API_KEY")]
+    (if (or (nil? override) (str-blank? override)) nil override)))
+
+; ── 인증: X-API-Key 헤더 검증 ────────────────────────────────
+(defn check-api-key [req]
+  (if (or (nil? req) (nil? API-KEY))
+    false
+    (let [key (server-req-header req "x-api-key")]
+      (if (nil? key)
+        false
+        (= key API-KEY)))))
+
+; ── API 에러 응답 ──────────────────────────────────────────────
+(defn api-auth-error []
+  (server-cors (server-json 401 {"error" "Unauthorized" "message" "X-API-Key 헤더 필요"})))
+
+(defn api-not-found []
+  (server-cors (server-json 404 {"error" "Not Found"})))
+
+; ── GET /api/invoices : 송장 목록 ──────────────────────────────
+(defn api-invoices-list [req]
+  (if (not (check-api-key req))
+    (api-auth-error)
+    (let [status-filter (get (get req "query") "status")
+          invs (list-invoices)
+          filtered (if (str-blank? status-filter)
+                     invs
+                     (filter (fn [i] (= (get i "status") status-filter)) invs))]
+      (server-cors (server-json {"invoices" filtered "count" (length filtered)})))))
+
+; ── GET /api/invoices/:id : 송장 상세 ──────────────────────────
+(defn api-invoices-detail [req]
+  (if (not (check-api-key req))
+    (api-auth-error)
+    (let [id (get (get req "params") "id")
+          inv (project-invoice id)]
+      (if (nil? inv)
+        (api-not-found)
+        (server-cors (server-json {"invoice" inv}))))))
+
+; ── GET /api/contracts : 계약 목록 ──────────────────────────────
+(defn api-contracts-list [req]
+  (if (not (check-api-key req))
+    (api-auth-error)
+    (let [status-filter (get (get req "query") "status")
+          ctrcts (all-contracts)
+          filtered (if (str-blank? status-filter)
+                     ctrcts
+                     (filter (fn [c] (= (get c "status") status-filter)) ctrcts))]
+      (server-cors (server-json {"contracts" filtered "count" (length filtered)})))))
+
+; ── GET /api/contracts/:id : 계약 상세 ──────────────────────────
+(defn api-contracts-detail [req]
+  (if (not (check-api-key req))
+    (api-auth-error)
+    (let [id (get (get req "params") "id")
+          c (project-contract id)]
+      (if (nil? c)
+        (api-not-found)
+        (server-cors (server-json {"contract" c}))))))
+
+; ── GET /api/schedule/projects : 프로젝트 목록 ──────────────────
+(defn api-schedule-projects-list [req]
+  (if (not (check-api-key req))
+    (api-auth-error)
+    (let [projects (all-projects)]
+      (server-cors (server-json {"projects" projects "count" (length projects)})))))
+
+; ── GET /api/schedule/projects/:id : 프로젝트 상세 ───────────────
+(defn api-schedule-projects-detail [req]
+  (if (not (check-api-key req))
+    (api-auth-error)
+    (let [id (get (get req "params") "id")
+          p (project-schedule id)]
+      (if (nil? p)
+        (api-not-found)
+        (server-cors (server-json {"project" p}))))))
+
+; ── GET /api/focus/today : 오늘 집중 + 습관 ──────────────────────
+(defn api-focus-today [req]
+  (if (not (check-api-key req))
+    (api-auth-error)
+    (let [evs (read-focus-events)
+          active (active-session-from-events evs)
+          sessions (today-sessions-from-events evs)
+          today-mins (today-focus-mins-from-sessions sessions)
+          today-count (length sessions)
+          habits (all-habits-from-events evs)]
+      (server-cors (server-json {
+        "today" {
+          "completed_sessions" today-count
+          "total_minutes" today-mins
+          "active_session" active
+          "habits_count" (length habits)
+        }
+        "habits" habits
+        "sessions" sessions
+      })))))

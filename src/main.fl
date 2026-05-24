@@ -18,8 +18,9 @@
 (load "src/focus.fl")
 (load "src/delivery-state.fl")
 (load "src/delivery.fl")
+(load "src/api.fl")
 
-; ── 라우트 등록 (46개: invoice 8 + contract 7 + contract-invoice-link 2 + template 5 + schedule 8 + focus 11 + delivery 5) ──
+; ── 라우트 등록 (53개: invoice 8 + contract 7 + contract-invoice-link 2 + template 5 + schedule 8 + focus 11 + delivery 5 + api 7) ──
 ; invoice 8 (M1.1: send/cancel 추가)
 (server-get  "/"                    "handle-index")
 (server-get  "/invoices"            "handle-invoices")
@@ -73,6 +74,15 @@
 (server-post "/delivery/:id/sent"          "handle-delivery-sent")
 (server-post "/delivery/:id/failed"        "handle-delivery-failed")
 (server-post "/delivery/:id/retry"         "handle-delivery-retry")
+
+; api 7 (v1.3-P1: REST JSON API + API Key 인증)
+(server-get  "/api/invoices"               "api-invoices-list")
+(server-get  "/api/invoices/:id"           "api-invoices-detail")
+(server-get  "/api/contracts"              "api-contracts-list")
+(server-get  "/api/contracts/:id"          "api-contracts-detail")
+(server-get  "/api/schedule/projects"      "api-schedule-projects-list")
+(server-get  "/api/schedule/projects/:id"  "api-schedule-projects-detail")
+(server-get  "/api/focus/today"            "api-focus-today")
 
 (println "soloflow listening on http://localhost:41955")
 (server-start 41955)
