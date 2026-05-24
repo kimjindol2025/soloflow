@@ -149,7 +149,25 @@
         (str "<div class=\"card\" style=\"border-color:#6c757d\"><strong>취소 사유:</strong> " (esc (or (get inv "cancel_reason") "—")) "</div>")
         "")
       "<h2>입금 이력</h2>"
-      (render-payments (get inv "payments")))))
+      (render-payments (get inv "payments"))
+      (let [cid (invoice-linked-contract-id (get inv "id"))]
+        (if (nil? cid) "" (render-linked-contract-section cid))))))
+
+; ── Linked Contract 역방향 표시 ────────────────────────────────
+(defn render-linked-contract-section [contract-id]
+  (let [contract (project-contract contract-id)]
+    (if (nil? contract)
+      ""
+      (str
+        "<h2>연결된 계약</h2>"
+        "<div class=\"card\">"
+          "<table>"
+          "<tr><th>계약서</th><td><a href=\"/contracts/" (esc contract-id) "\">" (esc (get contract "title")) "</a></td></tr>"
+          "<tr><th>상태</th><td>" (contract-status-badge (get contract "status")) "</td></tr>"
+          "<tr><th>기간</th><td>" (fmt-date (get contract "period_start")) " ~ " (fmt-date (or (get contract "period_end") "—")) "</td></tr>"
+          "<tr><th>금액</th><td>" (money (get contract "amount_krw")) " " (if (get contract "vat_included") "(VAT 포함)" "(VAT 별도)") "</td></tr>"
+          "</table>"
+        "</div>"))))
 
 ; ── status 별 작업 버튼 분기 ────────────────────────────────
 (defn render-action-buttons [id status balance]
