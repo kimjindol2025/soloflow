@@ -39,9 +39,9 @@
 - 8개 라우트
 
 ### M2: 계약 (Contract)
-- 계약서 작성/서명/만료 관리
+- 계약서 작성/서명/취소/만료 관리
 - 템플릿 지원
-- 7개 라우트 (v1.2-P0: cancel 추가)
+- 8개 라우트 (v1.2-P0: cancel 추가로 7→8)
 
 ### M3: 일정 (Schedule)
 - 프로젝트 타임라인/마일스톤
@@ -64,7 +64,8 @@
 
 ### v1.1-C: 연결 (Contract-Invoice Link)
 - 계약 ↔ 송장 매핑 (1:N)
-- Invariant: cancelled 계약은 송장 연결 금지
+- Invariant I1: cancelled 계약은 송장 연결 금지 (v1.2-P0에서 활성화)
+- Invoice 상세 페이지에 연결된 계약 역방향 표시 (v1.2-P1-P2)
 - 2개 라우트
 
 ## 설치 및 실행
@@ -107,13 +108,11 @@ SOLOFLOW_CONTRACT_EVENTS_PATH=tests/data/contract-cancel-test.jsonl \
 - **v1.2-P0** (Contract Cancel): 계약 취소 기능 + I1 invariant 활성화
 - **v1.2-P1A** (State one-pass): Invoice 읽기 최적화 (365 reads → 1 read)
 - **v1.2-P1B** (Contract one-pass): Contract 읽기 최적화 (2 reads → 1 read)
-
-### 🔄 진행 중
-- **v1.2-P1C**: Schedule 읽기 최적화 (5 reads → 1 read)
-- **v1.2-P1D**: Focus 읽기 최적화 (3+H reads → 1 read)
+- **v1.2-P1C** (Schedule one-pass): Schedule 읽기 최적화 (5 reads → 1 read)
+- **v1.2-P1D** (Focus one-pass): Focus 읽기 최적화 (3+H reads → 1 read)
+- **v1.2-P1-P2** (Invoice Linking UX): Invoice 상세에서 linked contract 역방향 표시
 
 ### 📋 백로그 (이후 버전)
-- v1.2-P2: Linked invoice 역방향 표시 (UX 완결)
 - v2: 모바일 native 앱
 - v2: 다중 통화·환율 지원
 - v2: 이메일/SMS 자동 발송
@@ -173,8 +172,8 @@ SOLOFLOW_CONTRACT_EVENTS_PATH=tests/data/contract-cancel-test.jsonl \
 ### Read Count 감소
 - `GET /` (대시보드): **365 → 1 read** ✅ (v1.2-P1A)
 - `GET /contracts/:id`: **2 → 1 read** ✅ (v1.2-P1B)
-- `GET /schedule/project/:id`: **5 → 1 read** (v1.2-P1C 진행 중)
-- `GET /focus`: **3+H → 1 read** (v1.2-P1D 진행 중)
+- `GET /schedule/project/:id`: **5 → 1 read** ✅ (v1.2-P1C)
+- `GET /focus`: **3+H → 1 read** ✅ (v1.2-P1D)
 
 ## 파일 구조
 
