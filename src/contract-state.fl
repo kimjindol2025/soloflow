@@ -1,10 +1,14 @@
 ; soloflow contract-state.fl — 계약 도메인 event log + projection
 ; dec-002: event sourcing. dec-008: data/contract-events.jsonl 별도 파일
+; v1.2-P1: one-pass scan. read-contract-events 1회 → project-contract-from-events
 
 ; ── EVENTS-PATH override (테스트 격리) ──────────────────────
 (define CONTRACT-EVENTS-PATH
   (let [override (env-get "SOLOFLOW_CONTRACT_EVENTS_PATH")]
     (if (or (nil? override) (str-blank? override)) "data/contract-events.jsonl" override)))
+
+; ── 계측: read-contract-events 호출 횟수 ────────────────────
+(define READ-CONTRACT-EVENTS-COUNT (atom 0))
 
 ; ── 이벤트 append ──────────────────────────────────────────
 (defn append-contract-event [type payload]
@@ -13,14 +17,15 @@
     (file-append CONTRACT-EVENTS-PATH line)
     ev))
 
-; ── 전체 이벤트 ─────────────────────────────────────────────
+; ── 전체 이벤트 (계측 포함) ─────────────────────────────────
 (defn read-contract-events []
-  (if (not (file-exists CONTRACT-EVENTS-PATH))
-    []
-    (let [raw (file-read CONTRACT-EVENTS-PATH)
-          lines (str-lines raw)
-          non-empty (filter (fn [l] (not (str-blank? l))) lines)]
-      (map (fn [l] (json-parse l)) non-empty))))
+  (do (swap! READ-CONTRACT-EVENTS-COUNT + 1)
+      (if (not (file-exists CONTRACT-EVENTS-PATH))
+        []
+        (let [raw (file-read CONTRACT-EVENTS-PATH)
+              lines (str-lines raw)
+              non-empty (filter (fn [l] (not (str-blank? l))) lines)]
+          (map (fn [l] (json-parse l)) non-empty)))))
 
 (defn contract-events-of-type [type]
   (filter (fn [e] (= (get e "type") type)) (read-contract-events)))
@@ -46,10 +51,9 @@
        (let [diff (- period-end (now-ms))]
          (and (>= diff 0) (<= diff 1209600000)))))  ; 14 * 86400000
 
-; ── 단일 계약 projection ───────────────────────────────────
-(defn project-contract [id]
-  (let [evs (contract-events-for-id id)
-        created-list  (filter (fn [e] (= (get e "type") "contract.created")) evs)
+; ── 단일 계약 projection (내부 로직만, evs는 외부에서 필터된 것) ──
+(defn project-contract-from-events [id evs]
+  (let [created-list  (filter (fn [e] (= (get e "type") "contract.created")) evs)
         signed-list   (filter (fn [e] (= (get e "type") "contract.signed")) evs)
         cancelled-list (filter (fn [e] (= (get e "type") "contract.cancelled")) evs)]
     (if (= (length created-list) 0)
@@ -86,6 +90,11 @@
          "signature"     signature
          "expiring_soon" (and (not (nil? signed)) (contract-expiring-soon? status (get c "period_end")))}))))
 
+; ── backward-compat wrapper: project-contract(id) ───────────
+(defn project-contract [id]
+  (let [evs (contract-events-for-id id)]
+    (project-contract-from-events id evs)))
+
 ; ── 전체 계약 리스트 projection ────────────────────────────
 ; 주의: list-contracts 는 v11 빌트인 (effect contract 시스템). all-contracts 로 회피
 (defn all-contracts []
@@ -111,11 +120,15 @@
      "threshold_days" threshold
      "triggered_by_cron" true}))
 
-; ── 특정 contract 의 최근 contract.expiring 이벤트들 ──────
-(defn expiring-reminders [id]
-  (let [evs (contract-events-for-id id)
-        reminders (filter (fn [e] (= (get e "type") "contract.expiring")) evs)]
+; ── 특정 contract의 만료 알림 (이미 필터된 evs에서) ──────────
+(defn expiring-reminders-from-events [id evs]
+  (let [reminders (filter (fn [e] (= (get e "type") "contract.expiring")) evs)]
     (map (fn [r] (get r "payload")) reminders)))
+
+; ── backward-compat wrapper: expiring-reminders(id) ────────
+(defn expiring-reminders [id]
+  (let [evs (contract-events-for-id id)]
+    (expiring-reminders-from-events id evs)))
 
 ; ── 특정 contract + threshold 의 최근 expiring 이벤트 확인 ──
 (defn has-expiring-reminder? [id threshold-days]

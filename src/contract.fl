@@ -160,13 +160,14 @@
 ; ── GET /contracts/:id : 상세 + timeline ───────────────────
 (defn handle-contract-detail [req]
   (let [id (get (get req "params") "id")
-        c (project-contract id)]
+        evs (contract-events-for-id id)
+        c (project-contract-from-events id evs)]
     (if (nil? c)
       (server-status 404 "계약을 찾을 수 없습니다")
-      (server-html (layout (str "계약 · " (str-slice (get c "title") 0 40)) (render-contract-detail c))))))
+      (server-html (layout (str "계약 · " (str-slice (get c "title") 0 40)) (render-contract-detail c evs))))))
 
-(defn render-contract-detail [c]
-  (let [reminders (expiring-reminders (get c "id"))]
+(defn render-contract-detail [c evs]
+  (let [reminders (expiring-reminders-from-events (get c "id") evs)]
     (str
       "<h1>" (esc (get c "title")) " " (contract-badge (get c "status")) "</h1>"
       (render-expiring-badges reminders)
