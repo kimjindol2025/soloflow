@@ -5,11 +5,13 @@
 ; ── GET / : 요약 대시보드 ──────────────────────────────────
 (defn handle-index [req]
   (let [now-ym (date-format (now-ms) "yyyy-MM")
-        revenue (monthly-revenue now-ym)
-        unpaid (unpaid-invoices)
+        evs (read-events)
+        invs (list-invoices-from-events evs)
+        revenue (monthly-revenue-from-events now-ym evs)
+        unpaid (unpaid-invoices-from-invoices invs)
         unpaid-total (sum (map (fn [inv] (get inv "balance")) unpaid))
-        due (due-today)
-        due-week (due-this-week)
+        due (due-today-from-invoices invs)
+        due-week (due-this-week-from-invoices invs)
         body (str
           "<h1>이번 달 요약 (" (esc now-ym) ")</h1>"
           "<div class=\"grid\">"

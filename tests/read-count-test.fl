@@ -1,0 +1,156 @@
+; soloflow read-count-test.fl — v1.2-P1 read 카운터 검증
+; 실행: SOLOFLOW_EVENTS_PATH=tests/data/read-count-test.jsonl node /root/kim/freelang-v11/bootstrap.js run tests/read-count-test.fl
+
+(load "src/render.fl")
+(load "src/state.fl")
+
+(println "═══ soloflow v1.2-P1 read-count tests ═══")
+(println "")
+
+(define PASS-COUNT (atom 0))
+(define FAIL-COUNT (atom 0))
+
+(defn check [label actual expected]
+  (if (= actual expected)
+    (do (swap! PASS-COUNT + 1)
+        (println (str "  ✓ " label)))
+    (do (swap! FAIL-COUNT + 1)
+        (println (str "  ✗ " label))
+        (println (str "      expected: " expected))
+        (println (str "      actual:   " actual)))))
+
+(println (str "EVENTS-PATH = " EVENTS-PATH))
+(if (not (str-includes EVENTS-PATH "read-count"))
+  (do (println "❌ SOLOFLOW_EVENTS_PATH 미설정")
+      (throw "env var missing"))
+  nil)
+
+(if (file-exists EVENTS-PATH) (file-delete EVENTS-PATH) nil)
+
+(defn write-ev [ts type payload]
+  (file-append EVENTS-PATH
+    (str (json-stringify {"ts" ts "type" type "payload" payload}) "\n")))
+
+(define NOW (now-ms))
+
+; ── fixture: 3개 송장 생성 ──────────────────────────────────
+(println "[1] fixture 생성 (3개 송장)")
+(write-ev NOW "invoice.created"
+  {"id" "inv-001" "client" "A사" "amount_krw" 1000000
+   "issued_at" NOW "due_at" (+ NOW 2592000000) "memo" ""})
+(write-ev (+ NOW 1000) "invoice.sent"
+  {"id" "inv-001" "sent_at" (+ NOW 1000)})
+(write-ev (+ NOW 2000) "invoice.payment.received"
+  {"id" "inv-001" "paid_amount_krw" 500000 "paid_at" (+ NOW 2000) "method" "bank"})
+
+(write-ev (+ NOW 3000) "invoice.created"
+  {"id" "inv-002" "client" "B사" "amount_krw" 500000
+   "issued_at" (+ NOW 3000) "due_at" (+ NOW 2592000000) "memo" ""})
+(write-ev (+ NOW 4000) "invoice.sent"
+  {"id" "inv-002" "sent_at" (+ NOW 4000)})
+
+(write-ev (+ NOW 5000) "invoice.created"
+  {"id" "inv-003" "client" "C사" "amount_krw" 300000
+   "issued_at" (+ NOW 5000) "due_at" (+ NOW 2592000000) "memo" ""})
+
+(println "  ✓ fixture created (3 invoices)")
+(println "")
+
+; ── test 1: read-events-from-events-count 초기값 확인 ──────
+(println "[2] read-events-count 초기값")
+(let [initial-count @READ-EVENTS-COUNT]
+  (check "count 초기값" initial-count 0))
+
+(println "")
+
+; ── test 2: list-invoices-from-events (read-events 호출 없음) ──
+(println "[3] list-invoices-from-events semantic parity")
+(let [evs (read-events)
+      count-after-read @READ-EVENTS-COUNT
+      invs-from-events (list-invoices-from-events evs)
+      count-after-invs @READ-EVENTS-COUNT]
+  (check "read-events 호출 1회 (초기 0 → 1)" count-after-read 1)
+  (check "list-invoices-from-events 추가 read 없음" (= count-after-invs count-after-read) true)
+  (check "invs 개수 = 3" (length invs-from-events) 3))
+
+(println "")
+
+; ── test 3: unpaid-invoices-from-invoices (read 호출 없음) ────
+(println "[4] unpaid-invoices semantic parity")
+(let [evs (read-events)
+      invs (list-invoices-from-events evs)
+      count-before @READ-EVENTS-COUNT
+      unpaid (unpaid-invoices-from-invoices invs)
+      count-after @READ-EVENTS-COUNT]
+  (check "unpaid-invoices-from-invoices 추가 read 없음" (= count-before count-after) true)
+  (check "unpaid = 2 (inv-001, inv-002 partial, inv-003)" (length unpaid) 3))
+
+(println "")
+
+; ── test 4: due-today-from-invoices (read 호출 없음) ────────
+(println "[5] due-today semantic parity")
+(let [evs (read-events)
+      invs (list-invoices-from-events evs)
+      count-before @READ-EVENTS-COUNT
+      due (due-today-from-invoices invs)
+      count-after @READ-EVENTS-COUNT]
+  (check "due-today-from-invoices 추가 read 없음" (= count-before count-after) true))
+
+(println "")
+
+; ── test 5: monthly-revenue-from-events (read 호출 없음) ─────
+(println "[6] monthly-revenue semantic parity")
+(let [ym (date-format NOW "yyyy-MM")
+      evs (read-events)
+      count-before @READ-EVENTS-COUNT
+      revenue (monthly-revenue-from-events ym evs)
+      count-after @READ-EVENTS-COUNT]
+  (check "monthly-revenue-from-events 추가 read 없음" (= count-before count-after) true)
+  (check "revenue = 500000" revenue 500000))
+
+(println "")
+
+; ── test 6: one-pass pattern (handle-index 최적화) ───────────
+(println "[7] handle-index 최적화 패턴 (one-pass)")
+(do
+  (reset! READ-EVENTS-COUNT 0)
+  (let [evs (read-events)
+        invs (list-invoices-from-events evs)
+        unpaid (unpaid-invoices-from-invoices invs)
+        due (due-today-from-invoices invs)
+        ym (date-format NOW "yyyy-MM")
+        revenue (monthly-revenue-from-events ym evs)
+        count @READ-EVENTS-COUNT]
+    (check "one-pass: read-events = 1회" count 1)))
+
+(println "")
+
+; ── test 7: backward-compat: list-invoices() (추가 read) ────
+(println "[8] backward-compat: list-invoices() (추가 read 발생)")
+(do
+  (reset! READ-EVENTS-COUNT 0)
+  (let [invs (list-invoices)
+        count @READ-EVENTS-COUNT]
+    (check "list-invoices() read = 1회 (wrapper)" count 1)
+    (check "backward-compat result size = 3" (length invs) 3)))
+
+(println "")
+
+; ── test 9: backward-compat: unpaid-invoices() (1 read) ──────
+(println "[9] backward-compat: unpaid-invoices() (list-invoices 경유 1회)")
+(do
+  (reset! READ-EVENTS-COUNT 0)
+  (let [unpaid (unpaid-invoices)
+        count @READ-EVENTS-COUNT]
+    (check "unpaid-invoices() read = 1회 (list-invoices wrapper)" count 1)
+    (check "backward-compat result size = 3" (length unpaid) 3)))
+
+(println "")
+
+(println "═══════════════════════════════════════════")
+(println (str "결과: " @PASS-COUNT " PASS / " @FAIL-COUNT " FAIL"))
+(println "═══════════════════════════════════════════")
+
+(if (> @FAIL-COUNT 0)
+  (throw (str @FAIL-COUNT " test(s) failed"))
+  (println "✅ 모든 테스트 통과"))

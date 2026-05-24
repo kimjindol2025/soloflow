@@ -1,12 +1,15 @@
 ; soloflow state.fl — event log + projection
 ; dec-002 LOCK: event sourcing. 직접 row update 금지. append 만.
 ; dec-007 LOCK: JSONL. data/invoice-events.jsonl 한 파일.
+; v1.2-P1: one-pass scan. read-events 1회 → list-invoices-from-events
 
 ; EVENTS-PATH 는 SOLOFLOW_EVENTS_PATH 환경변수로 override 가능 (테스트 격리용)
-; 주의: fl-env-get 은 FL 내부 env 조회. OS 환경변수는 env-get (v11.5.1+)
 (define EVENTS-PATH
   (let [override (env-get "SOLOFLOW_EVENTS_PATH")]
     (if (or (nil? override) (str-blank? override)) "data/invoice-events.jsonl" override)))
+
+; ── 계측: read-events 호출 횟수 ──────────────────────────────
+(define READ-EVENTS-COUNT (atom 0))
 
 ; ── 이벤트 append (atomic file-append) ─────────────────────
 (defn append-event [type payload]
@@ -15,14 +18,15 @@
     (file-append EVENTS-PATH line)
     ev))
 
-; ── 전체 이벤트 읽기 ────────────────────────────────────────
+; ── 전체 이벤트 읽기 (계측 포함) ────────────────────────────
 (defn read-events []
-  (if (not (file-exists EVENTS-PATH))
-    []
-    (let [raw (file-read EVENTS-PATH)
-          lines (str-lines raw)
-          non-empty (filter (fn [l] (not (str-blank? l))) lines)]
-      (map (fn [l] (json-parse l)) non-empty))))
+  (do (swap! READ-EVENTS-COUNT + 1)
+      (if (not (file-exists EVENTS-PATH))
+        []
+        (let [raw (file-read EVENTS-PATH)
+              lines (str-lines raw)
+              non-empty (filter (fn [l] (not (str-blank? l))) lines)]
+          (map (fn [l] (json-parse l)) non-empty)))))
 
 ; ── 타입별 필터 ─────────────────────────────────────────────
 (defn events-of-type [type]
@@ -40,10 +44,20 @@
         match (filter (fn [e] (= (get e "type") type)) evs)]
     (> (length match) 0)))
 
-; ── 단일 송장 projection: id → invoice state (6-state lifecycle) ─
-(defn project-invoice [id]
-  (let [evs (events-for-id id)
-        created-list (filter (fn [e] (= (get e "type") "invoice.created")) evs)
+; ── status 산출: 6-state machine (draft/sent/partial/paid/overdue/cancelled) ──
+(defn compute-status [amount paid due-at has-sent has-cancel]
+  (cond
+    has-cancel                   "cancelled"
+    (not has-sent)               "draft"
+    (>= paid amount)             "paid"
+    (> paid 0)                   "partial"
+    (and (not (nil? due-at))
+         (< due-at (now-ms)))    "overdue"
+    :else                        "sent"))
+
+; ── 단일 송장 projection (내부 로직만, evs는 외부에서 필터된 것) ──
+(defn project-invoice-from-events [id evs]
+  (let [created-list (filter (fn [e] (= (get e "type") "invoice.created")) evs)
         send-list    (filter (fn [e] (= (get e "type") "invoice.sent")) evs)
         cancel-list  (filter (fn [e] (= (get e "type") "invoice.cancelled")) evs)
         pay-list     (filter (fn [e] (= (get e "type") "invoice.payment.received")) evs)]
@@ -78,27 +92,34 @@
          "cancel_reason" (if (nil? cancel-info) nil (get cancel-info "reason"))
          "payments" payments}))))
 
-; ── status 산출: 6-state machine (draft/sent/partial/paid/overdue/cancelled) ──
-(defn compute-status [amount paid due-at has-sent has-cancel]
-  (cond
-    has-cancel                   "cancelled"
-    (not has-sent)               "draft"
-    (>= paid amount)             "paid"
-    (> paid 0)                   "partial"
-    (and (not (nil? due-at))
-         (< due-at (now-ms)))    "overdue"
-    :else                        "sent"))
+; ── backward-compat wrapper: project-invoice(id) ───────────────
+(defn project-invoice [id]
+  (let [evs (events-for-id id)]
+    (project-invoice-from-events id evs)))
 
-; ── 전체 송장 리스트 projection ─────────────────────────────
+; ── 전체 송장 리스트 (이미 읽은 evs에서 projection) ───────────
+(defn list-invoices-from-events [evs]
+  (let [created (filter (fn [e] (= (get e "type") "invoice.created")) evs)
+        ids (map (fn [e] (get (get e "payload") "id")) created)]
+    (compact (map (fn [id]
+                    (let [id-evs (filter
+                                   (fn [e] (= (get (get e "payload") "id") id))
+                                   evs)]
+                      (project-invoice-from-events id id-evs)))
+                  ids))))
+
+; ── backward-compat wrapper: list-invoices() ───────────────────
 (defn list-invoices []
-  (let [created (events-of-type "invoice.created")
-        ids (map (fn [e] (get (get e "payload") "id")) created)
-        invs (map (fn [id] (project-invoice id)) ids)]
-    (compact invs)))
+  (let [evs (read-events)]
+    (list-invoices-from-events evs)))
 
-; ── 미수금 (status != paid) ─────────────────────────────────
+; ── 미수금 필터 (이미 생성된 invoices에서) ───────────────────
+(defn unpaid-invoices-from-invoices [invs]
+  (filter (fn [inv] (not (= (get inv "status") "paid"))) invs))
+
+; ── backward-compat wrapper: unpaid-invoices() ─────────────────
 (defn unpaid-invoices []
-  (filter (fn [inv] (not (= (get inv "status") "paid"))) (list-invoices)))
+  (unpaid-invoices-from-invoices (list-invoices)))
 
 ; ── aging bucket: now - due_at → "0-30" / "31-60" / "60+" ──
 (defn aging-bucket [inv]
@@ -112,9 +133,9 @@
           (<= days 60)  "31-60일"
           :else         "60일 초과")))))
 
-; ── 이번 달 수입: paid_at 기준 같은 YYYY-MM 인 payment 합계 ─
-(defn monthly-revenue [year-month]
-  (let [pays (events-of-type "invoice.payment.received")
+; ── 이번 달 수입: paid_at 기준 같은 YYYY-MM 인 payment 합계 ──
+(defn monthly-revenue-from-events [year-month evs]
+  (let [pays (filter (fn [e] (= (get e "type") "invoice.payment.received")) evs)
         match (filter
                 (fn [p]
                   (let [paid-at (get (get p "payload") "paid_at")]
@@ -122,17 +143,26 @@
                 pays)]
     (sum (map (fn [p] (get (get p "payload") "paid_amount_krw")) match))))
 
-; ── 오늘 due 인 송장 ───────────────────────────────────────
-(defn due-today []
+; ── backward-compat wrapper: monthly-revenue(year-month) ───────
+(defn monthly-revenue [year-month]
+  (let [evs (read-events)]
+    (monthly-revenue-from-events year-month evs)))
+
+; ── 오늘 due 인 송장 필터 ──────────────────────────────────
+(defn due-today-from-invoices [invs]
   (let [today-y-m-d (date-format (now-ms) "yyyy-MM-dd")]
     (filter
       (fn [inv]
         (and (not (= (get inv "status") "paid"))
              (= (date-format (get inv "due_at") "yyyy-MM-dd") today-y-m-d)))
-      (list-invoices))))
+      invs)))
 
-; ── 이번 주 due (지금부터 7일 이내, 만기 미경과·미완납만) ──
-(defn due-this-week []
+; ── backward-compat wrapper: due-today() ───────────────────────
+(defn due-today []
+  (due-today-from-invoices (list-invoices)))
+
+; ── 이번 주 due 필터 (지금부터 7일 이내, 만기 미경과·미완납만) ──
+(defn due-this-week-from-invoices [invs]
   (let [now (now-ms)
         end (date-add now "days" 7)]
     (filter
@@ -142,7 +172,11 @@
                (and (not (nil? d))
                     (>= d now)
                     (<= d end)))))
-      (list-invoices))))
+      invs)))
+
+; ── backward-compat wrapper: due-this-week() ───────────────────
+(defn due-this-week []
+  (due-this-week-from-invoices (list-invoices)))
 
 ; ── ID 생성: <ts>-<6 hex> (sortable) ───────────────────────
 (defn make-invoice-id []
