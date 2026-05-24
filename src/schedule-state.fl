@@ -1,10 +1,14 @@
 ; soloflow schedule-state.fl — M3 schedule domain (project timeline + daily focus)
 ; dec-008: data/schedule-events.jsonl 별도 파일
+; v1.2-P1: one-pass scan. read-schedule-events 1회 → project-schedule-from-events
 
 ; ── EVENTS-PATH override (테스트 격리) ──────────────────────
 (define SCHEDULE-EVENTS-PATH
   (let [override (env-get "SOLOFLOW_SCHEDULE_EVENTS_PATH")]
     (if (or (nil? override) (str-blank? override)) "data/schedule-events.jsonl" override)))
+
+; ── 계측: read-schedule-events 호출 횟수 ──────────────────
+(define READ-SCHEDULE-EVENTS-COUNT (atom 0))
 
 ; ── 이벤트 append ──────────────────────────────────────────
 (defn append-schedule-event [type payload]
@@ -13,14 +17,15 @@
     (file-append SCHEDULE-EVENTS-PATH line)
     ev))
 
-; ── 전체 이벤트 ─────────────────────────────────────────────
+; ── 전체 이벤트 (계측 포함) ─────────────────────────────────
 (defn read-schedule-events []
-  (if (not (file-exists SCHEDULE-EVENTS-PATH))
-    []
-    (let [raw (file-read SCHEDULE-EVENTS-PATH)
-          lines (str-lines raw)
-          non-empty (filter (fn [l] (not (str-blank? l))) lines)]
-      (map (fn [l] (json-parse l)) non-empty))))
+  (do (swap! READ-SCHEDULE-EVENTS-COUNT + 1)
+      (if (not (file-exists SCHEDULE-EVENTS-PATH))
+        []
+        (let [raw (file-read SCHEDULE-EVENTS-PATH)
+              lines (str-lines raw)
+              non-empty (filter (fn [l] (not (str-blank? l))) lines)]
+          (map (fn [l] (json-parse l)) non-empty)))))
 
 (defn schedule-events-of-type [type]
   (filter (fn [e] (= (get e "type") type)) (read-schedule-events)))
@@ -30,41 +35,13 @@
     (fn [e] (= (get (get e "payload") field-name) id))
     (read-schedule-events)))
 
-; ── 프로젝트 projection ────────────────────────────────────
-(defn project-schedule [id]
-  (let [evs (schedule-events-for-id id "project_id")
-        all-evs (read-schedule-events)
-        created-list (filter
-                       (fn [e] (and (= (get e "type") "schedule.project-created")
-                                   (= (get (get e "payload") "id") id)))
-                       all-evs)]
-    (if (= (length created-list) 0)
-      nil
-      (let [p (get (get created-list 0) "payload")
-            milestones (get-milestones id)
-            focus-sessions (get-focus-sessions id)
-            completed (count-completed-milestones id)]
-        {"id" id
-         "title" (get p "title")
-         "start_date" (get p "start_date")
-         "end_date" (get p "end_date")
-         "description" (get p "description")
-         "milestones" milestones
-         "total_milestones" (length milestones)
-         "completed_milestones" completed
-         "progress_percent" (if (= (length milestones) 0)
-                             0
-                             (int (* (/ completed (length milestones)) 100)))
-         "focus_sessions" focus-sessions}))))
-
-; ── 마일스톤 조회 ────────────────────────────────────────────
-(defn get-milestones [project-id]
-  (let [all-evs (read-schedule-events)
-        added (filter (fn [e] (and (= (get e "type") "schedule.milestone-added")
+; ── 마일스톤 조회 (이미 필터된 evs에서) ──────────────────
+(defn get-milestones-from-events [project-id evs]
+  (let [added (filter (fn [e] (and (= (get e "type") "schedule.milestone-added")
                                    (= (get (get e "payload") "project_id") project-id)))
-                      all-evs)
+                      evs)
         completed-list (filter (fn [e] (= (get e "type") "schedule.milestone-completed"))
-                               all-evs)]
+                               evs)]
     (map
       (fn [m-ev]
         (let [m (get m-ev "payload")
@@ -83,14 +60,18 @@
            "description" (get m "description")}))
       added)))
 
-; ── focus session 조회 ──────────────────────────────────────
-(defn get-focus-sessions [project-id]
-  (let [all-evs (read-schedule-events)
-        started (filter (fn [e] (and (= (get e "type") "schedule.focus-window-started")
+; ── backward-compat wrapper: get-milestones(project-id) ────
+(defn get-milestones [project-id]
+  (let [evs (read-schedule-events)]
+    (get-milestones-from-events project-id evs)))
+
+; ── focus session 조회 (이미 필터된 evs에서) ──────────────
+(defn get-focus-sessions-from-events [project-id evs]
+  (let [started (filter (fn [e] (and (= (get e "type") "schedule.focus-window-started")
                                      (= (get (get e "payload") "project_id") project-id)))
-                        all-evs)
+                        evs)
         ended (filter (fn [e] (= (get e "type") "schedule.focus-window-ended"))
-                      all-evs)]
+                      evs)]
     (map
       (fn [s-ev]
         (let [s (get s-ev "payload")
@@ -106,11 +87,50 @@
            "completed_tasks" (if end-payload (get end-payload "completed_tasks") 0)}))
       started)))
 
-; ── 완료된 마일스톤 개수 ────────────────────────────────────
-(defn count-completed-milestones [project-id]
-  (let [milestones (get-milestones project-id)
-        completed (filter (fn [m] (get m "completed")) milestones)]
+; ── backward-compat wrapper: get-focus-sessions(project-id) ──
+(defn get-focus-sessions [project-id]
+  (let [evs (read-schedule-events)]
+    (get-focus-sessions-from-events project-id evs)))
+
+; ── 완료된 마일스톤 개수 (milestone 배열에서) ──────────────
+(defn count-completed-milestones-from-milestones [milestones]
+  (let [completed (filter (fn [m] (get m "completed")) milestones)]
     (length completed)))
+
+; ── backward-compat wrapper: count-completed-milestones(project-id) ──
+(defn count-completed-milestones [project-id]
+  (let [milestones (get-milestones project-id)]
+    (count-completed-milestones-from-milestones milestones)))
+
+; ── 프로젝트 projection (이미 필터된 evs에서) ──────────────
+(defn project-schedule-from-events [id evs]
+  (let [created-list (filter
+                       (fn [e] (and (= (get e "type") "schedule.project-created")
+                                   (= (get (get e "payload") "id") id)))
+                       evs)]
+    (if (= (length created-list) 0)
+      nil
+      (let [p (get (get created-list 0) "payload")
+            milestones (get-milestones-from-events id evs)
+            focus-sessions (get-focus-sessions-from-events id evs)
+            completed (count-completed-milestones-from-milestones milestones)]
+        {"id" id
+         "title" (get p "title")
+         "start_date" (get p "start_date")
+         "end_date" (get p "end_date")
+         "description" (get p "description")
+         "milestones" milestones
+         "total_milestones" (length milestones)
+         "completed_milestones" completed
+         "progress_percent" (if (= (length milestones) 0)
+                             0
+                             (int (* (/ completed (length milestones)) 100)))
+         "focus_sessions" focus-sessions}))))
+
+; ── backward-compat wrapper: project-schedule(id) ──────────
+(defn project-schedule [id]
+  (let [evs (read-schedule-events)]
+    (project-schedule-from-events id evs)))
 
 ; ── 전체 프로젝트 리스트 ────────────────────────────────────
 (defn all-projects []

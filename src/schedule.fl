@@ -64,7 +64,8 @@
 ; ── GET /schedule/project/:id : 프로젝트 상세 ────────────
 (defn handle-project-detail [req]
   (let [id (get (get req "params") "id")
-        p (project-schedule id)]
+        evs (read-schedule-events)
+        p (project-schedule-from-events id evs)]
     (if (nil? p)
       (server-status 404 "프로젝트를 찾을 수 없습니다")
       (server-html (layout (get p "title") (render-project-detail p))))))
